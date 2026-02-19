@@ -1,0 +1,12 @@
+[workspace]
+members = ["ogex-core", "ogex-cli"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Ogex Contributors"]
+license = "MPL 2.0"
+
+[workspace.dependencies]
+thiserror = "1.0"

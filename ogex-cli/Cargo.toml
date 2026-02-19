@@ -1,0 +1,15 @@
+[package]
+name = "ogex-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ogex"
+path = "src/main.rs"
+
+[dependencies]
+ogex-core = { path = "../ogex-core" }
+clap = { version = "4.0", features = ["derive"] }
+colored = "2.0"

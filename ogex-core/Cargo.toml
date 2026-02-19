@@ -1,0 +1,19 @@
+[package]
+name = "ogex-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+
+[features]
+default = []
+wasm = ["wasm-bindgen", "js-sys"]
+
+[lib]
+name = "ogex_core"
+path = "src/lib.rs"
