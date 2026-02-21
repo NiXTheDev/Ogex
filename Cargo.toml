@@ -1,5 +1,5 @@
 [workspace]
-members = ["ogex-core", "ogex-cli"]
+members = ["ogex-core", "ogex-cli", "ogex-python"]
 resolver = "2"
 
 [workspace.package]

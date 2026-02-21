@@ -1,0 +1,17 @@
+[package]
+name = "ogex-python"
+version = "0.1.0"
+edition = "2024"
+description = "Python bindings for Ogex regex engine"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "ogex_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+ogex-core = { path = "../ogex-core" }
+pyo3 = { version = "0.22", features = ["extension-module"] }
+
+[build-dependencies]
+pyo3-build-config = "0.22"
