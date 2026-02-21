@@ -24,20 +24,21 @@ impl PyRegex {
     }
 
     /// Check if the pattern matches at the beginning of the string
-    fn match_(&self, _py: Python<'_>, string: &str) -> PyResult<Option<PyMatch>> {
+    fn match_(&self, string: &str) -> Option<PyMatch> {
         // Check if match is at position 0
         if let Some(m) = self.inner.find(string) {
             if m.start == 0 {
-                return Ok(Some(PyMatch::new(m, string.to_string())));
+                return Some(PyMatch::new(m, string.to_string()));
             }
         }
-        Ok(None)
+        None
     }
 
     /// Search for a match anywhere in the string
-    fn search(&self, _py: Python<'_>, string: &str) -> PyResult<Option<PyMatch>> {
-        let m = self.inner.find(string);
-        Ok(m.map(|m| PyMatch::new(m, string.to_string())))
+    fn search(&self, string: &str) -> Option<PyMatch> {
+        self.inner
+            .find(string)
+            .map(|m| PyMatch::new(m, string.to_string()))
     }
 
     /// Check if the pattern matches the string
@@ -46,7 +47,7 @@ impl PyRegex {
     }
 
     /// Find all non-overlapping matches
-    fn findall(&self, py: Python<'_>, string: &str) -> PyResult<Bound<'_, PyList>> {
+    fn findall<'py>(&self, py: Python<'py>, string: &str) -> PyResult<Bound<'py, PyList>> {
         let matches: Vec<_> = self.inner.find_all(string);
 
         let list = PyList::empty(py);
@@ -59,13 +60,7 @@ impl PyRegex {
 
     /// Replace matches with a replacement string
     #[pyo3(signature = (repl, string, count=None))]
-    fn sub(
-        &self,
-        _py: Python<'_>,
-        repl: &str,
-        string: &str,
-        count: Option<usize>,
-    ) -> PyResult<String> {
+    fn sub(&self, repl: &str, string: &str, count: Option<usize>) -> PyResult<String> {
         let replacement = ogex_core::Replacement::parse(repl)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
@@ -120,14 +115,10 @@ pub struct PyMatch {
 
 impl PyMatch {
     fn new(m: ogex_core::Match, input: String) -> Self {
-        let groups = m.groups.clone();
-        let start = m.start;
-        let end = m.end;
-
         PyMatch {
-            start,
-            end,
-            groups,
+            start: m.start,
+            end: m.end,
+            groups: m.groups,
             input,
         }
     }
@@ -142,7 +133,7 @@ impl PyMatch {
     }
 
     /// Get a group by index
-    fn group(&self, _py: Python<'_>, n: u32) -> Option<&str> {
+    fn group(&self, n: u32) -> Option<&str> {
         self.groups.get(&n).map(|(s, e)| &self.input[*s..*e])
     }
 
@@ -188,37 +179,30 @@ fn compile(pattern: &str) -> PyResult<PyRegex> {
 
 /// Search for a match
 #[pyfunction]
-fn search(_py: Python<'_>, pattern: &str, string: &str) -> PyResult<Option<PyMatch>> {
+fn search(pattern: &str, string: &str) -> PyResult<Option<PyMatch>> {
     let regex = PyRegex::new(pattern)?;
-    regex.search(_py, string)
+    Ok(regex.search(string))
 }
 
 /// Check if pattern matches at start
 #[pyfunction]
-fn match__(_py: Python<'_>, pattern: &str, string: &str) -> PyResult<Option<PyMatch>> {
+fn match_(pattern: &str, string: &str) -> PyResult<Option<PyMatch>> {
     let regex = PyRegex::new(pattern)?;
-    regex.match_(_py, string)
+    Ok(regex.match_(string))
 }
 
 /// Find all matches
 #[pyfunction]
-fn findall(py: Python<'_>, pattern: &str, string: &str) -> PyResult<Bound<'_, PyList>> {
+fn findall<'py>(py: Python<'py>, pattern: &str, string: &str) -> PyResult<Bound<'py, PyList>> {
     let regex = PyRegex::new(pattern)?;
     regex.findall(py, string)
 }
 
 /// Substitute matches
-#[pyo3(signature = (pattern, repl, string, count=None))]
-#[pyfunction]
-fn sub(
-    _py: Python<'_>,
-    pattern: &str,
-    repl: &str,
-    string: &str,
-    count: Option<usize>,
-) -> PyResult<String> {
+#[pyfunction(signature = (pattern, repl, string, count=None))]
+fn sub(pattern: &str, repl: &str, string: &str, count: Option<usize>) -> PyResult<String> {
     let regex = PyRegex::new(pattern)?;
-    regex.sub(_py, repl, string, count)
+    regex.sub(repl, string, count)
 }
 
 /// Ogex Python module
@@ -228,7 +212,7 @@ fn ogex(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMatch>()?;
     m.add_function(wrap_pyfunction!(compile, m)?)?;
     m.add_function(wrap_pyfunction!(search, m)?)?;
-    m.add_function(wrap_pyfunction!(match__, m)?)?;
+    m.add_function(wrap_pyfunction!(match_, m)?)?;
     m.add_function(wrap_pyfunction!(findall, m)?)?;
     m.add_function(wrap_pyfunction!(sub, m)?)?;
     Ok(())
