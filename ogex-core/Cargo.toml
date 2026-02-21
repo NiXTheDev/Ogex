@@ -25,3 +25,11 @@ wasm = ["wasm-bindgen", "js-sys", "console_error_panic_hook"]
 name = "ogex_core"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
+
+[[bench]]
+name = "bench"
+harness = false
+
+[dev-dependencies]
+criterion = { workspace = true }
+

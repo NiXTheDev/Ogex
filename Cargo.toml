@@ -15,3 +15,8 @@ categories = ["text-processing", "parsing"]
 
 [workspace.dependencies]
 thiserror = "1.0"
+criterion = "0.5"
+
+[profile.release]
+lto = true
+

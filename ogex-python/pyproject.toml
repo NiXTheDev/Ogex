@@ -5,12 +5,14 @@ build-backend = "maturin"
 [project]
 name = "ogex"
 version = "0.1.0"
-description = "Python bindings for Ogex regex engine"
+description = "Python bindings for Ogex regex engine with unified syntax"
 readme = "README.md"
 license = { text = "MIT OR Apache-2.0" }
 requires-python = ">=3.8"
+authors = [{ name = "Ogex Contributors" }]
+keywords = ["regex", "parsing", "text", "pattern-matching"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "License :: OSI Approved :: Apache Software License",
@@ -21,7 +23,10 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Rust",
+    "Topic :: Text Processing",
+    "Topic :: Software Development :: Libraries",
 ]
+urls = { Homepage = "https://github.com/NiXTheDev/Ogex", Repository = "https://github.com/NiXTheDev/Ogex" }
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
