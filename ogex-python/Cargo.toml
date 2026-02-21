@@ -1,12 +1,12 @@
 [package]
-name = "ogex-python"
+name = "ogex"
 version = "0.1.0"
 edition = "2024"
 description = "Python bindings for Ogex regex engine"
 license = "MIT OR Apache-2.0"
 
 [lib]
-name = "ogex_python"
+name = "ogex"
 crate-type = ["cdylib"]
 
 [dependencies]

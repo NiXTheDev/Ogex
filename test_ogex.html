@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ogex WASM Test</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1e1e1e; color: #d4d4d4; }
+    .test { margin: 10px 0; padding: 10px; background: #252526; border-radius: 4px; }
+    .pass { color: #4ec9b0; }
+    .fail { color: #f14c4c; }
+    h2 { color: #569cd6; }
+    pre { margin: 5px 0; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Ogex WASM Test Suite</h1>
+  <div id="output"></div>
+
+  <script type="module">
+    import init, { JsRegex } from './ogex-core/pkg/ogex_core.js';
+
+    const output = document.getElementById('output');
+    
+    function log(msg, isPass = null) {
+      const div = document.createElement('div');
+      div.className = 'test' + (isPass !== null ? (isPass ? ' pass' : ' fail') : '');
+      div.innerHTML = msg;
+      output.appendChild(div);
+    }
+
+    async function runTests() {
+      try {
+        log('Initializing WASM...');
+        await init();
+        log('WASM initialized successfully!', true);
+
+        // Test 1: Basic match
+        log('<h2>Test 1: Basic match</h2>');
+        const regex1 = new JsRegex("hello");
+        log(`"hello world" matches: ${regex1.is_match("hello world")}`, regex1.is_match("hello world"));
+        log(`"goodbye" matches: ${regex1.is_match("goodbye")}`, !regex1.is_match("goodbye"));
+
+        // Test 2: Named groups
+        log('<h2>Test 2: Named groups</h2>');
+        const regex2 = new JsRegex("(name:\\w+)");
+        const match2 = regex2.find("hello name:John Smith");
+        if (match2) {
+          log(`Match: "${match2.text}"`, true);
+          log(`Named group 'name': "${match2.named_group("name")}"`, match2.named_group("name") === "John");
+        }
+
+        // Test 3: Relative backreference \g{-1}
+        log('<h2>Test 3: Relative backreference \\g{-1}</h2>');
+        const regex3 = new JsRegex("(a)(b)\\g{-1}");
+        log(`"abb" matches: ${regex3.is_match("abb")}`, regex3.is_match("abb"));
+        log(`"aba" matches: ${regex3.is_match("aba")}`, !regex3.is_match("aba"));
+
+        // Test 4: \G literal in pattern
+        log('<h2>Test 4: \\G literal in pattern</h2>');
+        const regex4 = new JsRegex("\\G");
+        log(`"G" matches: ${regex4.is_match("G")}`, regex4.is_match("G"));
+        log(`"g" matches: ${regex4.is_match("g")}`, !regex4.is_match("g"));
+
+        // Test 5: Find all
+        log('<h2>Test 5: Find all</h2>');
+        const regex5 = new JsRegex("\\d+");
+        const matches5 = regex5.find_all("abc 123 def 456 ghi 789");
+        log(`Found ${matches5.length} matches`, matches5.length === 3);
+
+        // Test 6: Transpile
+        log('<h2>Test 6: Transpile</h2>');
+        const transpiled = JsRegex.transpile("(name:\\w+)(email:\\w+)");
+        log(`"(name:\\w+)(email:\\w+)" → "${transpiled}"`, transpiled.includes("?<name>"));
+
+        log('<h2>✅ All tests completed!</h2>');
+
+      } catch (error) {
+        log(`<h2>❌ Error: ${error.message}</h2>`, false);
+        console.error(error);
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>
