@@ -1,4 +1,4 @@
-# ogex-core
+# ogex
 
 A regex engine with unified syntax for named groups and backreferences.
 
@@ -16,13 +16,13 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ogex-core = "0.1"
+ogex = "0.1"
 ```
 
 ## Usage
 
 ```rust
-use ogex_core::Regex;
+use ogex::Regex;
 
 // Basic matching
 let regex = Regex::new(r"hello (\w+)").unwrap();
@@ -39,7 +39,7 @@ let regex = Regex::new(r"(a)(b)\g{-1}").unwrap();
 assert!(regex.is_match("abb"));
 
 // Replacements with entire match
-use ogex_core::Replacement;
+use ogex::Replacement;
 let repl = Replacement::parse(r"[\G]").unwrap();
 let result = repl.apply("hello", &[]);
 assert_eq!(result, "[hello]");

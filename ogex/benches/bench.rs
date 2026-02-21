@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use ogex_core::Regex;
+use ogex::Regex;
 
 fn bench_basic_matching(c: &mut Criterion) {
     let pattern = Regex::new(r"hello\s+\w+").unwrap();

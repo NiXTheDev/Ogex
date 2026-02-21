@@ -13,12 +13,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 async function main() {
   // Load WASM module manually
-  const wasmPath = join(__dirname, 'ogex-core', 'pkg', 'ogex_core_bg.wasm');
+  const wasmPath = join(__dirname, 'ogex', 'pkg', 'ogex_bg.wasm');
   const wasmBuffer = await readFile(wasmPath);
   const wasmModule = await WebAssembly.compile(wasmBuffer);
   
   // Load the JS bindings
-  const { default: init, JsRegex } = await import('./ogex-core/pkg/ogex_core_bg.js');
+  const { default: init, JsRegex } = await import('./ogex/pkg/ogex_bg.js');
   
   // Initialize WASM
   const wasmInstance = await WebAssembly.instantiate(wasmModule, {});
@@ -32,7 +32,7 @@ async function main() {
   console.log(`  JsRegex class exists: ${typeof JsRegex === 'function'}`);
   
   console.log("\nℹ️  For full WASM testing, run:");
-  console.log("   1. npm install in ogex-core/pkg/");
+  console.log("   1. npm install in ogex/pkg/");
   console.log("   2. Use a bundler (vite/webpack) or test in browser");
 }
 

@@ -72,7 +72,7 @@ let repl = Replacement::parse(r"[\G]");
 ### Rust
 
 ```rust
-use ogex_core::Regex;
+use ogex::Regex;
 
 let regex = Regex::new(r"(name:\w+) is \g{name}").unwrap();
 let m = regex.find("John is John").unwrap();
@@ -158,7 +158,7 @@ ogex_free_regex(regex);
 
 ```
 ogex/
-├── ogex-core/      # Core regex library
+├── ogex/      # Core regex library
 │   ├── src/
 │   │   ├── lexer.rs    # Tokenizer
 │   │   ├── parser.rs   # Recursive descent parser
@@ -185,7 +185,7 @@ ogex/
 ### Build Library
 
 ```bash
-cargo build --release -p ogex-core
+cargo build --release -p ogex
 ```
 
 ### Build CLI
@@ -201,10 +201,10 @@ cargo build --release -p ogex-cli
 curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
 # Build for bundler (webpack, etc.)
-wasm-pack build ogex-core --target bundler --features wasm
+wasm-pack build ogex --target bundler --features wasm
 
 # Build for Node.js
-wasm-pack build ogex-core --target nodejs --features wasm
+wasm-pack build ogex --target nodejs --features wasm
 ```
 
 ## Testing

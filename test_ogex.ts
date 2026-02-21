@@ -8,7 +8,7 @@
  */
 
 // Import the WASM module
-import init, { JsRegex } from "./ogex-core/pkg/ogex_core.js";
+import init, { JsRegex } from "./ogex/pkg/ogex.js";
 
 async function main() {
   // Initialize WASM
