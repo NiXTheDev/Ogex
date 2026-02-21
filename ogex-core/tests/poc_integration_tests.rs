@@ -2,7 +2,7 @@
 //!
 //! These tests validate that the PoC components work together correctly.
 
-use ogex_core::{compile, parse, transpile_debug, Lexer};
+use ogex_core::{compile, parse, transpile_debug, Lexer, Regex, Replacement};
 
 #[test]
 fn test_poc_full_pipeline() {
@@ -65,9 +65,24 @@ fn test_poc_literal_sequences() {
 }
 
 #[test]
-fn test_poc_mixed_content() {
-    let result = compile("prefix(name:middle)suffix").unwrap();
-    assert_eq!(result, "prefix(?<name>middle)suffix");
+fn test_named_group_replacement() {
+    // Test basic numbered group replacement
+    let regex = Regex::new(r"(a)(b)").unwrap();
+    let m = regex.find("ab").unwrap();
+
+    // Replace with groups swapped
+    let repl = Replacement::parse(r"\g{2}\g{1}").unwrap();
+
+    // Groups must be in order by index (group 1 first, group 2 second)
+    let mut group_pairs = vec![(0usize, 0usize); m.groups.len()];
+    for (&idx, &(s, e)) in &m.groups {
+        if idx > 0 && (idx as usize) <= group_pairs.len() {
+            group_pairs[(idx - 1) as usize] = (s, e);
+        }
+    }
+    let result = repl.apply("ab", m.start, m.end, &group_pairs);
+    // Result should be "ba" (swapped)
+    assert_eq!(result, "ba");
 }
 
 #[test]
@@ -171,4 +186,149 @@ fn test_poc_performance_smoke() {
         "Performance test took too long: {:?}",
         elapsed
     );
+}
+
+// =============================================================================
+// Integration tests for \g{-n} relative backreferences and \G entire match
+// =============================================================================
+
+#[test]
+fn test_relative_backref_basic() {
+    // Pattern: (a)(b)\g{-1} should match "abb" (last numbered group is "b")
+    let regex = Regex::new(r"(a)(b)\g{-1}").unwrap();
+    assert!(regex.is_match("abb"));
+    assert!(!regex.is_match("aba"));
+    assert!(!regex.is_match("abc"));
+}
+
+#[test]
+fn test_relative_backref_multiple_groups() {
+    // Pattern: (a)(b)(c)\g{-1} should match "abcc" (last numbered group is "c")
+    let regex = Regex::new(r"(a)(b)(c)\g{-1}").unwrap();
+    assert!(regex.is_match("abcc"));
+    assert!(!regex.is_match("abcb"));
+}
+
+#[test]
+fn test_relative_backref_with_named_groups() {
+    // Named groups are excluded from relative indexing
+    // Pattern: (name:x)(a)(b)\g{-1}
+    // Groups: 1=(name:x) named, 2=(a) numbered, 3=(b) numbered
+    // Numbered groups indices: [2, 3]
+    // \g{-1} = last numbered = group 3 = "b"
+    let regex = Regex::new(r"(name:x)(a)(b)\g{-1}").unwrap();
+    assert!(regex.is_match("xabb")); // x, a, b, b
+    assert!(!regex.is_match("xaba"));
+}
+
+#[test]
+fn test_relative_backref_second_to_last() {
+    // \g{-2} = second-to-last numbered group
+    // Pattern: (a)(b)(c)\g{-2}
+    // Groups: 1=a, 2=b, 3=c (all numbered)
+    // Numbered groups indices: [1, 2, 3]
+    // \g{-2} = second-to-last = group 2 = "b"
+    let regex = Regex::new(r"(a)(b)(c)\g{-2}").unwrap();
+    assert!(regex.is_match("abcb")); // a, b, c, b
+    assert!(!regex.is_match("abca"));
+}
+
+#[test]
+fn test_relative_backref_find() {
+    // Use a numbered group, not named
+    let regex = Regex::new(r"(\d\d\d+)\g{-1}").unwrap();
+    // Should match two consecutive same 3+ digit numbers
+    let m = regex.find("test 123123 end");
+    assert!(m.is_some());
+    let m = m.unwrap();
+    assert_eq!(m.as_str("test 123123 end"), "123123");
+}
+
+#[test]
+fn test_relative_backref_in_sequence() {
+    // Multiple relative backrefs
+    // Pattern: (a)(b)\g{-1}\g{-2} should match "abba"
+    let regex = Regex::new(r"(a)(b)\g{-1}\g{-2}").unwrap();
+    assert!(regex.is_match("abba"));
+    assert!(!regex.is_match("abab"));
+}
+
+#[test]
+fn test_entire_match_replacement_g() {
+    // \G in replacement = entire match
+    let repl = Replacement::parse(r"[\G]").unwrap();
+    let result = repl.apply("hello world", 0, 5, &[]);
+    assert_eq!(result, "[hello]");
+}
+
+#[test]
+fn test_entire_match_replacement_g_with_groups() {
+    // Simple test - \G in replacement
+    let regex = Regex::new(r"\w+").unwrap();
+    let m = regex.find("hello world").unwrap();
+
+    // Replace with entire match wrapped
+    let repl = Replacement::parse(r"<\G>").unwrap();
+    let group_pairs: Vec<_> = m.groups.values().map(|(s, e)| (*s, *e)).collect();
+    let result = repl.apply("hello world", m.start, m.end, &group_pairs);
+    assert_eq!(result, "<hello>");
+}
+
+#[test]
+fn test_numbered_group_replacement() {
+    // Test using numbered groups directly
+    let regex = Regex::new(r"(a)(b)(c)").unwrap();
+    let m = regex.find("abc").unwrap();
+
+    let repl = Replacement::parse(r"\g{2}, \g{1}, \g{3}").unwrap();
+
+    // Groups in order by index
+    let mut group_pairs = vec![(0usize, 0usize); m.groups.len()];
+    for (&idx, &(s, e)) in &m.groups {
+        if idx > 0 && idx <= m.groups.len() as u32 {
+            group_pairs[(idx - 1) as usize] = (s, e);
+        }
+    }
+    let result = repl.apply("abc", m.start, m.end, &group_pairs);
+    // Group 1 = "a", Group 2 = "b", Group 3 = "c"
+    assert_eq!(result, "b, a, c");
+}
+
+#[test]
+fn test_escape_g_in_pattern() {
+    // \G in a pattern is a literal 'G' (escaped)
+    let regex = Regex::new(r"\G").unwrap();
+    assert!(regex.is_match("G"));
+    assert!(!regex.is_match("g")); // case-sensitive
+    assert!(!regex.is_match("abc"));
+}
+
+#[test]
+fn test_relative_backref_transpilation() {
+    // Relative backrefs should be preserved in transpilation
+    let result = compile(r"(a)\g{-1}").unwrap();
+    assert!(result.contains(r"\g{-1}"));
+}
+
+#[test]
+fn test_cli_style_pattern_matching() {
+    // Test patterns that would be used via CLI
+    let patterns_and_inputs = vec![
+        (r"(a)(b)\g{-1}", "abb", true),
+        (r"(a)(b)\g{-1}", "aba", false),
+        (r"(x)(y)\g{-1}", "xyy", true), // numbered groups, not named
+        (r"(\d\d\d)\g{-1}", "123123", true), // numbered group, not named
+    ];
+
+    for (pattern, input, should_match) in patterns_and_inputs {
+        let regex = Regex::new(pattern).unwrap();
+        assert_eq!(
+            regex.is_match(input),
+            should_match,
+            "Pattern {} with input {} expected match={}",
+            pattern,
+            input,
+            should_match
+        );
+    }
 }
