@@ -26,6 +26,8 @@ pub struct GroupRegistry {
     groups: Vec<GroupInfo>,
     /// Map from group name to index
     name_to_index: HashMap<String, u32>,
+    /// List of numbered (non-named) group indices, in order of appearance
+    numbered_groups: Vec<u32>,
     /// The next group index to assign
     next_index: u32,
 }
@@ -36,6 +38,7 @@ impl GroupRegistry {
         GroupRegistry {
             groups: Vec::new(),
             name_to_index: HashMap::new(),
+            numbered_groups: Vec::new(),
             next_index: 1, // Groups are 1-indexed
         }
     }
@@ -60,6 +63,9 @@ impl GroupRegistry {
                 return Err(GroupRegistryError::DuplicateGroupName(group_name.clone()));
             }
             self.name_to_index.insert(group_name.clone(), index);
+        } else {
+            // Track numbered (non-named) groups
+            self.numbered_groups.push(index);
         }
 
         let info = GroupInfo {
@@ -111,6 +117,54 @@ impl GroupRegistry {
             Ok(num)
         }
     }
+
+    /// Get the count of numbered (non-named) capture groups
+    /// This is used for relative backreference resolution
+    pub fn numbered_group_count(&self) -> usize {
+        self.numbered_groups.len()
+    }
+
+    /// Get a numbered group by reverse index for relative backreferences
+    ///
+    /// # Arguments
+    /// * `reverse_index` - The reverse index (1 = last numbered group, 2 = second-to-last, etc.)
+    ///
+    /// # Returns
+    /// The group index of the numbered group, or an error if out of bounds
+    ///
+    /// # Example
+    /// If there are 27 numbered groups (groups 1-27 with some named groups skipped):
+    /// - `get_numbered_by_reverse_index(1)` returns the last numbered group's index
+    /// - `get_numbered_by_reverse_index(27)` returns the first numbered group's index
+    pub fn get_numbered_by_reverse_index(
+        &self,
+        reverse_index: usize,
+    ) -> Result<u32, GroupRegistryError> {
+        if reverse_index == 0 || reverse_index > self.numbered_groups.len() {
+            return Err(GroupRegistryError::InvalidRelativeBackreference(
+                reverse_index as i32,
+            ));
+        }
+        // -1 because reverse_index is 1-based, and we want from the end
+        let actual_index = self.numbered_groups.len() - reverse_index;
+        Ok(self.numbered_groups[actual_index])
+    }
+
+    /// Resolve a relative backreference (\g{-n}) to an absolute group index
+    ///
+    /// # Arguments
+    /// * `relative` - The negative index (-1 = last numbered group, -2 = second-to-last, etc.)
+    ///
+    /// # Returns
+    /// The absolute group index, or an error if invalid
+    pub fn resolve_relative_backreference(&self, relative: i32) -> Result<u32, GroupRegistryError> {
+        if relative >= 0 {
+            return Err(GroupRegistryError::InvalidRelativeBackreference(relative));
+        }
+        // Convert -1 to 1, -2 to 2, etc.
+        let reverse_index = (-relative) as usize;
+        self.get_numbered_by_reverse_index(reverse_index)
+    }
 }
 
 /// Errors that can occur in the group registry
@@ -122,6 +176,8 @@ pub enum GroupRegistryError {
     UndefinedBackreference(String),
     /// A backreference number is invalid
     InvalidBackreference(u32),
+    /// A relative backreference index is invalid
+    InvalidRelativeBackreference(i32),
 }
 
 impl std::fmt::Display for GroupRegistryError {
@@ -135,6 +191,9 @@ impl std::fmt::Display for GroupRegistryError {
             }
             GroupRegistryError::InvalidBackreference(num) => {
                 write!(f, "invalid backreference number: {}", num)
+            }
+            GroupRegistryError::InvalidRelativeBackreference(index) => {
+                write!(f, "invalid relative backreference index: {}", index)
             }
         }
     }
@@ -165,7 +224,11 @@ impl GroupCollector {
             | crate::ast::Expr::StartAnchor
             | crate::ast::Expr::EndAnchor
             | crate::ast::Expr::Backreference(_)
-            | crate::ast::Expr::NamedBackreference(_) => Ok(()),
+            | crate::ast::Expr::RelativeBackreference(_)
+            | crate::ast::Expr::NamedBackreference(_)
+            | crate::ast::Expr::Shorthand(_)
+            | crate::ast::Expr::WordBoundary
+            | crate::ast::Expr::NonWordBoundary => Ok(()),
 
             crate::ast::Expr::Sequence(exprs) => {
                 for expr in exprs {
@@ -340,6 +403,65 @@ mod tests {
         assert!(matches!(
             result,
             Err(GroupRegistryError::DuplicateGroupName(_))
+        ));
+    }
+
+    #[test]
+    fn test_numbered_group_count() {
+        let mut registry = GroupRegistry::new();
+        registry.register_group(None).unwrap(); // group 1, numbered
+        registry.register_group(Some("named".to_string())).unwrap(); // group 2, named
+        registry.register_group(None).unwrap(); // group 3, numbered
+
+        assert_eq!(registry.numbered_group_count(), 2);
+    }
+
+    #[test]
+    fn test_get_numbered_by_reverse_index() {
+        let mut registry = GroupRegistry::new();
+        registry.register_group(None).unwrap(); // group 1, numbered
+        registry.register_group(Some("named1".to_string())).unwrap(); // group 2, named
+        registry.register_group(None).unwrap(); // group 3, numbered
+        registry.register_group(Some("named2".to_string())).unwrap(); // group 4, named
+        registry.register_group(None).unwrap(); // group 5, numbered
+
+        // Numbered groups: [1, 3, 5]
+        assert_eq!(registry.get_numbered_by_reverse_index(1).unwrap(), 5); // last numbered
+        assert_eq!(registry.get_numbered_by_reverse_index(2).unwrap(), 3); // second-to-last
+        assert_eq!(registry.get_numbered_by_reverse_index(3).unwrap(), 1); // first numbered
+
+        // Out of bounds
+        assert!(matches!(
+            registry.get_numbered_by_reverse_index(4),
+            Err(GroupRegistryError::InvalidRelativeBackreference(_))
+        ));
+        assert!(matches!(
+            registry.get_numbered_by_reverse_index(0),
+            Err(GroupRegistryError::InvalidRelativeBackreference(_))
+        ));
+    }
+
+    #[test]
+    fn test_resolve_relative_backreference() {
+        let mut registry = GroupRegistry::new();
+        registry.register_group(None).unwrap(); // group 1, numbered
+        registry.register_group(Some("named".to_string())).unwrap(); // group 2, named
+        registry.register_group(None).unwrap(); // group 3, numbered
+        registry.register_group(None).unwrap(); // group 4, numbered
+
+        // Numbered groups: [1, 3, 4]
+        assert_eq!(registry.resolve_relative_backreference(-1).unwrap(), 4); // last numbered
+        assert_eq!(registry.resolve_relative_backreference(-2).unwrap(), 3); // second-to-last
+        assert_eq!(registry.resolve_relative_backreference(-3).unwrap(), 1); // first numbered
+
+        // Positive numbers are invalid
+        assert!(matches!(
+            registry.resolve_relative_backreference(1),
+            Err(GroupRegistryError::InvalidRelativeBackreference(_))
+        ));
+        assert!(matches!(
+            registry.resolve_relative_backreference(0),
+            Err(GroupRegistryError::InvalidRelativeBackreference(_))
         ));
     }
 }

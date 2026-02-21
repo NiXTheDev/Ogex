@@ -63,8 +63,18 @@ pub enum Expr {
     /// Backreference by number (\1, \2, etc.)
     Backreference(u32),
 
+    /// Relative backreference by negative index (\g{-1}, \g{-2}, etc.)
+    /// References numbered groups only, from the end: \g{-1} = last numbered group
+    RelativeBackreference(i32),
+
     /// Backreference by name (\g{name})
     NamedBackreference(String),
+    /// Character class shorthand (\w, \d, \s, \W, \D, \S)
+    Shorthand(char),
+    /// Word boundary assertion (\b)
+    WordBoundary,
+    /// Non-word boundary assertion (\B)
+    NonWordBoundary,
 }
 
 /// A character class [abc], [^abc], or [a-z]
@@ -92,16 +102,24 @@ pub enum ClassItem {
 pub enum Quantifier {
     /// Zero or more (*)
     ZeroOrMore,
+    /// Zero or more lazy (*?)
+    ZeroOrMoreLazy,
     /// One or more (+)
     OneOrMore,
+    /// One or more lazy (+?)
+    OneOrMoreLazy,
     /// Zero or one (?)
     Optional,
     /// Exactly n times ({n})
     Exactly(u32),
     /// At least n times ({n,})
     AtLeast(u32),
+    /// At least n times lazy ({n,}?)
+    AtLeastLazy(u32),
     /// Between n and m times ({n,m})
     Between(u32, u32),
+    /// Between n and m times lazy ({n,m}?)
+    BetweenLazy(u32, u32),
 }
 
 impl Expr {
@@ -184,6 +202,11 @@ impl Expr {
         Expr::Backreference(n)
     }
 
+    /// Create a relative backreference (\g{-n})
+    pub fn relative_backreference(n: i32) -> Self {
+        Expr::RelativeBackreference(n)
+    }
+
     /// Create a named backreference
     pub fn named_backreference(name: impl Into<String>) -> Self {
         Expr::NamedBackreference(name.into())
@@ -218,7 +241,11 @@ impl Expr {
             Expr::StartAnchor => "^".to_string(),
             Expr::EndAnchor => "$".to_string(),
             Expr::Backreference(n) => format!("\\{}", n),
+            Expr::RelativeBackreference(n) => format!("\\g{{{}}}", n),
             Expr::NamedBackreference(name) => format!("\\g{{{}}}", name),
+            Expr::Shorthand(c) => format!("\\{}", c),
+            Expr::WordBoundary => "\\b".to_string(),
+            Expr::NonWordBoundary => "\\B".to_string(),
         }
     }
 }
@@ -261,11 +288,15 @@ impl Quantifier {
     fn to_regex_string(&self) -> String {
         match self {
             Quantifier::ZeroOrMore => "*".to_string(),
+            Quantifier::ZeroOrMoreLazy => "*?".to_string(),
             Quantifier::OneOrMore => "+".to_string(),
+            Quantifier::OneOrMoreLazy => "+?".to_string(),
             Quantifier::Optional => "?".to_string(),
             Quantifier::Exactly(n) => format!("{{{}}}", n),
             Quantifier::AtLeast(n) => format!("{{{},}}", n),
+            Quantifier::AtLeastLazy(n) => format!("{{{},}}?", n),
             Quantifier::Between(n, m) => format!("{{{},{}}}", n, m),
+            Quantifier::BetweenLazy(n, m) => format!("{{{},{}}}?", n, m),
         }
     }
 }
@@ -395,6 +426,12 @@ mod tests {
     fn test_backreference() {
         let expr = Expr::backreference(1);
         assert_eq!(expr.to_regex_string(), "\\1");
+    }
+
+    #[test]
+    fn test_relative_backreference() {
+        let expr = Expr::relative_backreference(-1);
+        assert_eq!(expr.to_regex_string(), "\\g{-1}");
     }
 
     #[test]

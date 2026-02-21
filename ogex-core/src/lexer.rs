@@ -34,12 +34,14 @@ pub enum Token {
     Dot,
     /// Star `*` (zero or more)
     Star,
+    /// Star lazy `*?` (zero or more lazy)
+    StarLazy,
     /// Plus `+` (one or more)
     Plus,
+    /// Plus lazy `+?` (one or more lazy)
+    PlusLazy,
     /// Question `?` (optional)
     Question,
-    /// Question `?` after quantifier (lazy modifier)
-    Lazy,
     /// Non-capturing group marker `(?:`
     NonCapturing,
     /// A named group identifier (the name part in `(name:...)`)
@@ -48,8 +50,27 @@ pub enum Token {
     Escape(char),
     /// A backreference by number (e.g., \1, \2)
     BackrefNumber(u32),
+    /// A relative backreference by negative index (e.g., \g{-1}, \g{-2})
+    /// References numbered groups only, from the end: \g{-1} = last numbered group
+    BackrefRelative(i32),
     /// A backreference by name (e.g., \g{name})
     BackrefName(String),
+    /// Word character shorthand (\w)
+    WordChar,
+    /// Non-word character shorthand (\W)
+    NonWordChar,
+    /// Digit shorthand (\d)
+    Digit,
+    /// Non-digit shorthand (\D)
+    NonDigit,
+    /// Whitespace shorthand (\s)
+    Whitespace,
+    /// Non-whitespace shorthand (\S)
+    NonWhitespace,
+    /// Word boundary assertion (\b)
+    WordBoundary,
+    /// Non-word boundary assertion (\B)
+    NonWordBoundary,
     /// A literal character
     Literal(char),
     /// End of input
@@ -72,14 +93,24 @@ impl fmt::Display for Token {
             Token::Dollar => write!(f, "`$`"),
             Token::Dot => write!(f, "`.`"),
             Token::Star => write!(f, "`*`"),
+            Token::StarLazy => write!(f, "`*?`"),
             Token::Plus => write!(f, "`+`"),
+            Token::PlusLazy => write!(f, "`+?`"),
             Token::Question => write!(f, "`?`"),
-            Token::Lazy => write!(f, "`?` (lazy)"),
             Token::NonCapturing => write!(f, "`?:`"),
             Token::NamedGroupStart(name) => write!(f, "named group `{}`", name),
             Token::Escape(c) => write!(f, "escape `\\{}`", c),
             Token::BackrefNumber(n) => write!(f, "backref `\\{}`", n),
+            Token::BackrefRelative(n) => write!(f, "relative backref `\\g{{{}}}`", n),
             Token::BackrefName(name) => write!(f, "backref `\\g{{{}}}`", name),
+            Token::WordChar => write!(f, "shorthand `\\w`"),
+            Token::NonWordChar => write!(f, "shorthand `\\W`"),
+            Token::Digit => write!(f, "shorthand `\\d`"),
+            Token::NonDigit => write!(f, "shorthand `\\D`"),
+            Token::Whitespace => write!(f, "shorthand `\\s`"),
+            Token::NonWhitespace => write!(f, "shorthand `\\S`"),
+            Token::WordBoundary => write!(f, "boundary `\\b`"),
+            Token::NonWordBoundary => write!(f, "boundary `\\B`"),
             Token::Literal(c) => write!(f, "literal `{}`", c),
             Token::Eof => write!(f, "EOF"),
         }
@@ -157,21 +188,30 @@ impl<'a> Lexer<'a> {
         match self.current_char {
             Some(c) => {
                 self.advance();
-                // Check if it's a backreference number
-                if c.is_ascii_digit() {
-                    // We need to read the full number
-                    let mut num = c.to_digit(10).unwrap();
-                    while let Some(c) = self.current_char {
-                        if c.is_ascii_digit() {
-                            num = num * 10 + c.to_digit(10).unwrap();
-                            self.advance();
-                        } else {
-                            break;
+                // Check for character class shorthands first
+                match c {
+                    'w' => Token::WordChar,
+                    'W' => Token::NonWordChar,
+                    'd' => Token::Digit,
+                    'D' => Token::NonDigit,
+                    's' => Token::Whitespace,
+                    'S' => Token::NonWhitespace,
+                    'b' => Token::WordBoundary,
+                    'B' => Token::NonWordBoundary,
+                    _ if c.is_ascii_digit() => {
+                        // It's a backreference number
+                        let mut num = c.to_digit(10).unwrap();
+                        while let Some(c) = self.current_char {
+                            if c.is_ascii_digit() {
+                                num = num * 10 + c.to_digit(10).unwrap();
+                                self.advance();
+                            } else {
+                                break;
+                            }
                         }
+                        Token::BackrefNumber(num)
                     }
-                    Token::BackrefNumber(num)
-                } else {
-                    Token::Escape(c)
+                    _ => Token::Escape(c),
                 }
             }
             None => Token::Escape('\0'), // Should be an error, but for now
@@ -191,11 +231,22 @@ impl<'a> Lexer<'a> {
             }
         }
         // Now position points past the last character of name, and current_char is '}'
-        let name = self.input[start..self.position - 1].to_string();
+        let content = self.input[start..self.position - 1].to_string();
         if self.current_char == Some('}') {
             self.advance(); // consume '}'
         }
-        Token::BackrefName(name)
+
+        // Check if this is a relative backreference (negative index)
+        // \g{-n} where n is a positive integer
+        if let Some(stripped) = content.strip_prefix('-')
+            && let Ok(n) = stripped.parse::<i32>()
+            && n > 0
+        {
+            return Token::BackrefRelative(-n); // Store as negative: -1, -2, etc.
+        }
+
+        // Default: treat as named backreference (including \g{1} for positive numbers)
+        Token::BackrefName(content)
     }
 
     /// Get the next token from the input
@@ -238,14 +289,14 @@ impl<'a> Lexer<'a> {
                     }
                 }
 
-                if let Some(c) = self.current_char {
-                    if c.is_alphabetic() || c == '_' {
-                        let name = self.read_identifier();
-                        // After the name, we expect a colon for named group
-                        if self.current_char == Some(':') {
-                            self.advance(); // consume the colon
-                            return Token::NamedGroupStart(name);
-                        }
+                if let Some(c) = self.current_char
+                    && (c.is_alphabetic() || c == '_')
+                {
+                    let name = self.read_identifier();
+                    // After the name, we expect a colon for named group
+                    if self.current_char == Some(':') {
+                        self.advance(); // consume the colon
+                        return Token::NamedGroupStart(name);
                     }
                 }
 
@@ -306,7 +357,7 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 if self.current_char == Some('?') {
                     self.advance();
-                    Token::Lazy
+                    Token::StarLazy
                 } else {
                     Token::Star
                 }
@@ -315,19 +366,14 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 if self.current_char == Some('?') {
                     self.advance();
-                    Token::Lazy
+                    Token::PlusLazy
                 } else {
                     Token::Plus
                 }
             }
             Some('?') => {
                 self.advance();
-                if self.current_char == Some('?') {
-                    self.advance();
-                    Token::Lazy
-                } else {
-                    Token::Question
-                }
+                Token::Question
             }
             Some(c) => {
                 self.advance();
@@ -584,6 +630,75 @@ mod tests {
                 Token::RightBrace,
                 Token::Eof,
             ]
+        );
+    }
+
+    #[test]
+    fn test_backref_relative() {
+        // \g{-1} - relative backreference to last numbered group
+        let mut lexer = Lexer::new(r"\g{-1}");
+        let tokens = lexer.tokenize();
+
+        assert_eq!(tokens, vec![Token::BackrefRelative(-1), Token::Eof,]);
+    }
+
+    #[test]
+    fn test_backref_relative_large() {
+        // \g{-27} - relative backreference
+        let mut lexer = Lexer::new(r"\g{-27}");
+        let tokens = lexer.tokenize();
+
+        assert_eq!(tokens, vec![Token::BackrefRelative(-27), Token::Eof,]);
+    }
+
+    #[test]
+    fn test_backref_relative_in_pattern() {
+        // Pattern with relative backreference
+        let mut lexer = Lexer::new(r"(a)(b)\g{-1}");
+        let tokens = lexer.tokenize();
+
+        assert_eq!(
+            tokens,
+            vec![
+                Token::LeftParen,
+                Token::Literal('a'),
+                Token::RightParen,
+                Token::LeftParen,
+                Token::Literal('b'),
+                Token::RightParen,
+                Token::BackrefRelative(-1),
+                Token::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_escape_uppercase_g() {
+        // \G in patterns is a literal G (escaped character)
+        let mut lexer = Lexer::new(r"\G");
+        let tokens = lexer.tokenize();
+
+        assert_eq!(tokens, vec![Token::Escape('G'), Token::Eof,]);
+    }
+
+    #[test]
+    fn test_escape_g_no_brace() {
+        // \g without { is just an escaped 'g'
+        let mut lexer = Lexer::new(r"\g");
+        let tokens = lexer.tokenize();
+
+        assert_eq!(tokens, vec![Token::Escape('g'), Token::Eof,]);
+    }
+
+    #[test]
+    fn test_backref_name_with_number() {
+        // \g{1} is treated as a named backreference with name "1"
+        let mut lexer = Lexer::new(r"\g{1}");
+        let tokens = lexer.tokenize();
+
+        assert_eq!(
+            tokens,
+            vec![Token::BackrefName("1".to_string()), Token::Eof,]
         );
     }
 }

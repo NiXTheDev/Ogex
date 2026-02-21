@@ -4,7 +4,7 @@
 //! from a regex AST, and provides NFA simulation for pattern matching.
 
 use crate::ast::{ClassItem, Expr, Quantifier};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// An NFA state ID
 pub type StateId = usize;
@@ -27,12 +27,19 @@ pub enum Transition {
     GroupStart(u32),
     /// End of a capture group
     GroupEnd(u32),
-    /// Backreference transition
+    /// Backreference transition (absolute group index)
     Backref(u32),
+    /// Relative backreference transition (\g{-n})
+    /// Resolved at match time against numbered groups only
+    BackrefRelative(i32),
     /// Start of string anchor
     StartAnchor,
     /// End of string anchor
     EndAnchor,
+    /// Word boundary assertion
+    WordBoundary,
+    /// Non-word boundary assertion
+    NonWordBoundary,
 }
 
 /// An NFA state
@@ -64,6 +71,13 @@ pub struct Nfa {
     pub accept: StateId,
     /// Next state ID to allocate
     next_state_id: StateId,
+    /// Next group ID to allocate
+    next_group_id: u32,
+    /// Named group mapping (name -> group_id)
+    named_groups: HashMap<String, u32>,
+    /// List of numbered (non-named) group indices, in order of appearance
+    /// Used for relative backreference resolution
+    numbered_groups: Vec<u32>,
 }
 
 impl Nfa {
@@ -74,6 +88,9 @@ impl Nfa {
             start: 0,
             accept: 0,
             next_state_id: 0,
+            next_group_id: 1, // Group 0 is the entire match
+            named_groups: HashMap::new(),
+            numbered_groups: Vec::new(),
         }
     }
 
@@ -116,11 +133,19 @@ impl Nfa {
             Expr::StartAnchor => self.compile_start_anchor(),
             Expr::EndAnchor => self.compile_end_anchor(),
             Expr::Backreference(n) => self.compile_backref(*n),
-            Expr::NamedBackreference(_name) => {
-                // For now, treat named backrefs as regular backrefs
-                // The actual resolution happens during matching
-                self.compile_backref(0)
+            Expr::RelativeBackreference(n) => self.compile_backref_relative(*n),
+            Expr::NamedBackreference(name) => {
+                // Resolve the named backreference to a group ID
+                if let Some(&group_id) = self.named_groups.get(name) {
+                    self.compile_backref(group_id)
+                } else {
+                    // Unknown group name - compile as backref 0 (will never match)
+                    self.compile_backref(0)
+                }
             }
+            Expr::Shorthand(c) => self.compile_shorthand(*c),
+            Expr::WordBoundary => self.compile_word_boundary(false),
+            Expr::NonWordBoundary => self.compile_word_boundary(true),
         }
     }
 
@@ -215,17 +240,30 @@ impl Nfa {
 
         match quantifier {
             Quantifier::ZeroOrMore => {
-                // *: Can skip or repeat
+                // *: Greedy - prefer to match more
                 self.add_transition(start, Transition::Epsilon, inner_start);
                 self.add_transition(start, Transition::Epsilon, accept);
                 self.add_transition(inner_accept, Transition::Epsilon, inner_start);
                 self.add_transition(inner_accept, Transition::Epsilon, accept);
             }
+            Quantifier::ZeroOrMoreLazy => {
+                // *?: Lazy - prefer to match less (exit first)
+                self.add_transition(start, Transition::Epsilon, accept);
+                self.add_transition(start, Transition::Epsilon, inner_start);
+                self.add_transition(inner_accept, Transition::Epsilon, accept);
+                self.add_transition(inner_accept, Transition::Epsilon, inner_start);
+            }
             Quantifier::OneOrMore => {
-                // +: Must match at least once, then can repeat
+                // +: Greedy - prefer to match more
                 self.add_transition(start, Transition::Epsilon, inner_start);
                 self.add_transition(inner_accept, Transition::Epsilon, inner_start);
                 self.add_transition(inner_accept, Transition::Epsilon, accept);
+            }
+            Quantifier::OneOrMoreLazy => {
+                // +?: Lazy - prefer to match less
+                self.add_transition(start, Transition::Epsilon, inner_start);
+                self.add_transition(inner_accept, Transition::Epsilon, accept);
+                self.add_transition(inner_accept, Transition::Epsilon, inner_start);
             }
             Quantifier::Optional => {
                 // ?: Can skip or match once
@@ -234,16 +272,24 @@ impl Nfa {
                 self.add_transition(inner_accept, Transition::Epsilon, accept);
             }
             Quantifier::Exactly(n) => {
-                // {n}: Match exactly n times
+                // {n}: Match exactly n times (no lazy/greedy distinction)
                 return self.compile_repeat_exact(expr, n);
             }
             Quantifier::AtLeast(n) => {
-                // {n,}: Match at least n times
+                // {n,}: Greedy - prefer to match more
                 return self.compile_repeat_at_least(expr, n);
             }
+            Quantifier::AtLeastLazy(n) => {
+                // {n,}?: Lazy - prefer to match less
+                return self.compile_repeat_at_least_lazy(expr, n);
+            }
             Quantifier::Between(n, m) => {
-                // {n,m}: Match between n and m times
+                // {n,m}: Greedy - prefer to match more
                 return self.compile_repeat_between(expr, n, m);
+            }
+            Quantifier::BetweenLazy(n, m) => {
+                // {n,m}?: Lazy - prefer to match less
+                return self.compile_repeat_between_lazy(expr, n, m);
             }
         }
 
@@ -286,6 +332,16 @@ impl Nfa {
         (exact_start, star_accept)
     }
 
+    /// Compile repeat at least n times (lazy)
+    fn compile_repeat_at_least_lazy(&mut self, expr: &Expr, n: u32) -> (StateId, StateId) {
+        // Match exactly n times, then add a *? (zero or more lazy)
+        let (exact_start, exact_accept) = self.compile_repeat_exact(expr, n);
+        let (star_start, star_accept) = self.compile_quantified(expr, Quantifier::ZeroOrMoreLazy);
+
+        self.add_transition(exact_accept, Transition::Epsilon, star_start);
+        (exact_start, star_accept)
+    }
+
     /// Compile repeat between n and m times
     fn compile_repeat_between(&mut self, expr: &Expr, n: u32, m: u32) -> (StateId, StateId) {
         if n == m {
@@ -313,11 +369,54 @@ impl Nfa {
         (start, accept)
     }
 
+    /// Compile repeat between n and m times (lazy)
+    fn compile_repeat_between_lazy(&mut self, expr: &Expr, n: u32, m: u32) -> (StateId, StateId) {
+        if n == m {
+            return self.compile_repeat_exact(expr, n);
+        }
+
+        // Match exactly n times, then match (m-n) optional times (lazy)
+        let (exact_start, exact_accept) = self.compile_repeat_exact(expr, n);
+
+        let start = self.new_state();
+        let accept = self.new_state();
+
+        self.add_transition(start, Transition::Epsilon, exact_start);
+
+        // Add (m-n) optional matches (lazy order)
+        let mut prev_accept = exact_accept;
+        for _ in 0..(m - n) {
+            let (s, a) = self.compile_expr(expr);
+            // Lazy: try to exit first, then match
+            self.add_transition(prev_accept, Transition::Epsilon, accept);
+            self.add_transition(prev_accept, Transition::Epsilon, s);
+            prev_accept = a;
+        }
+
+        self.add_transition(prev_accept, Transition::Epsilon, accept);
+        (start, accept)
+    }
+
     /// Compile a group (capturing or named)
-    fn compile_group(&mut self, expr: &Expr, _name: Option<String>) -> (StateId, StateId) {
-        // For now, just compile the inner expression
-        // In a full implementation, we'd track group boundaries
-        self.compile_expr(expr)
+    fn compile_group(&mut self, expr: &Expr, name: Option<String>) -> (StateId, StateId) {
+        let group_id = self.next_group_id;
+        self.next_group_id += 1;
+
+        // Register named group if applicable, otherwise track as numbered
+        if let Some(n) = name {
+            self.named_groups.insert(n, group_id);
+        } else {
+            self.numbered_groups.push(group_id);
+        }
+
+        let start = self.new_state();
+        let (inner_start, inner_accept) = self.compile_expr(expr);
+        let accept = self.new_state();
+
+        self.add_transition(start, Transition::GroupStart(group_id), inner_start);
+        self.add_transition(inner_accept, Transition::GroupEnd(group_id), accept);
+
+        (start, accept)
     }
 
     /// Compile start anchor (^)
@@ -344,6 +443,42 @@ impl Nfa {
         (start, accept)
     }
 
+    /// Compile relative backreference (\g{-n})
+    /// Resolution happens at match time against numbered groups only
+    fn compile_backref_relative(&mut self, n: i32) -> (StateId, StateId) {
+        let start = self.new_state();
+        let accept = self.new_state();
+        self.add_transition(start, Transition::BackrefRelative(n), accept);
+        (start, accept)
+    }
+
+    /// Compile shorthand character class (\w, \d, \s, etc.)
+    fn compile_shorthand(&mut self, c: char) -> (StateId, StateId) {
+        let start = self.new_state();
+        let accept = self.new_state();
+        self.add_transition(
+            start,
+            Transition::CharClass {
+                negated: c.is_ascii_uppercase(), // \W, \D, \S are negated
+                items: vec![crate::ast::ClassItem::Shorthand(c.to_ascii_lowercase())],
+            },
+            accept,
+        );
+        (start, accept)
+    }
+
+    /// Compile word boundary assertion (\b or \B)
+    fn compile_word_boundary(&mut self, negated: bool) -> (StateId, StateId) {
+        let start = self.new_state();
+        let accept = self.new_state();
+        if negated {
+            self.add_transition(start, Transition::NonWordBoundary, accept);
+        } else {
+            self.add_transition(start, Transition::WordBoundary, accept);
+        }
+        (start, accept)
+    }
+
     /// Compute epsilon closure of a set of states
     pub fn epsilon_closure(&self, states: &HashSet<StateId>) -> HashSet<StateId> {
         let mut closure = states.clone();
@@ -359,6 +494,36 @@ impl Nfa {
         }
 
         closure
+    }
+
+    /// Get the list of numbered (non-named) group indices
+    /// Used for relative backreference resolution
+    pub fn numbered_groups(&self) -> &[u32] {
+        &self.numbered_groups
+    }
+
+    /// Get the count of numbered (non-named) groups
+    pub fn numbered_group_count(&self) -> usize {
+        self.numbered_groups.len()
+    }
+
+    /// Resolve a relative backreference (\g{-n}) to an absolute group index
+    ///
+    /// # Arguments
+    /// * `relative` - The negative index (-1 = last numbered group, -2 = second-to-last, etc.)
+    ///
+    /// # Returns
+    /// The absolute group index, or None if invalid
+    pub fn resolve_relative(&self, relative: i32) -> Option<u32> {
+        if relative >= 0 {
+            return None;
+        }
+        let reverse_index = (-relative) as usize;
+        if reverse_index == 0 || reverse_index > self.numbered_groups.len() {
+            return None;
+        }
+        let actual_index = self.numbered_groups.len() - reverse_index;
+        Some(self.numbered_groups[actual_index])
     }
 }
 

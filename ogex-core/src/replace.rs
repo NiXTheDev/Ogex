@@ -1,8 +1,11 @@
 //! Replacement string handling
 //!
 //! This module handles replacement strings that can contain backreferences
-//! like \g{name} or \g{1}, as well as special references like \g{0} for the
-//! entire match.
+//! like \g{name} or \g{1}, as well as special references:
+//! - `\G` for the entire match
+//! - `\g{0}` for the entire match (deprecated, use `\G` instead)
+
+use std::collections::HashMap;
 
 /// A part of a replacement string
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +81,14 @@ impl Replacement {
                             current_literal.push(c);
                             current_literal.push(next);
                         }
+                    } else if next == 'G' {
+                        // \G - entire match reference
+                        chars.next(); // consume 'G'
+                        if !current_literal.is_empty() {
+                            parts.push(ReplacementPart::Literal(current_literal.clone()));
+                            current_literal.clear();
+                        }
+                        parts.push(ReplacementPart::EntireMatch);
                     } else {
                         // Escaped character, add to literal
                         chars.next();
@@ -121,6 +132,25 @@ impl Replacement {
         match_end: usize,
         groups: &[(usize, usize)],
     ) -> String {
+        self.apply_with_names(original, match_start, match_end, groups, &HashMap::new())
+    }
+
+    /// Apply the replacement to a match with named group support
+    ///
+    /// # Arguments
+    /// * `original` - The original input string
+    /// * `match_start` - Start position of the match
+    /// * `match_end` - End position of the match
+    /// * `groups` - Numbered capture groups as (start, end) pairs (1-indexed)
+    /// * `named_groups` - Map from group name to group index
+    pub fn apply_with_names(
+        &self,
+        original: &str,
+        match_start: usize,
+        match_end: usize,
+        groups: &[(usize, usize)],
+        named_groups: &HashMap<String, u32>,
+    ) -> String {
         let mut result = String::new();
 
         for part in &self.parts {
@@ -136,9 +166,15 @@ impl Replacement {
                     }
                     // If group doesn't exist, replace with empty string
                 }
-                ReplacementPart::BackrefName(_name) => {
-                    // For named backrefs, we'd need to look up the group index
-                    // For now, just skip
+                ReplacementPart::BackrefName(name) => {
+                    // Look up the named group index and get the captured text
+                    if let Some(&group_index) = named_groups.get(name)
+                        && let Some(&(start, end)) =
+                            groups.get((group_index as usize).saturating_sub(1))
+                        {
+                            result.push_str(&original[start..end]);
+                        }
+                    // If named group doesn't exist, replace with empty string
                 }
                 ReplacementPart::EntireMatch => {
                     result.push_str(&original[match_start..match_end]);
@@ -207,6 +243,23 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_entire_match_g() {
+        // \G is the preferred syntax for entire match
+        let repl = Replacement::parse("\\G").unwrap();
+        assert_eq!(repl.parts.len(), 1);
+        assert!(matches!(&repl.parts[0], ReplacementPart::EntireMatch));
+    }
+
+    #[test]
+    fn test_parse_mixed_with_g() {
+        let repl = Replacement::parse("prefix\\Gsuffix").unwrap();
+        assert_eq!(repl.parts.len(), 3);
+        assert!(matches!(&repl.parts[0], ReplacementPart::Literal(s) if s == "prefix"));
+        assert!(matches!(&repl.parts[1], ReplacementPart::EntireMatch));
+        assert!(matches!(&repl.parts[2], ReplacementPart::Literal(s) if s == "suffix"));
+    }
+
+    #[test]
     fn test_parse_mixed() {
         let repl = Replacement::parse("prefix\\1suffix").unwrap();
         assert_eq!(repl.parts.len(), 3);
@@ -238,6 +291,21 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_entire_match_g() {
+        // \G should work the same as \g{0}
+        let repl = Replacement::parse("\\G").unwrap();
+        let result = repl.apply("hello world", 0, 5, &[]);
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn test_apply_entire_match_with_brackets() {
+        let repl = Replacement::parse("[\\G]").unwrap();
+        let result = repl.apply("hello world", 0, 5, &[]);
+        assert_eq!(result, "[hello]");
+    }
+
+    #[test]
     fn test_apply_mixed() {
         let repl = Replacement::parse("[\\1]").unwrap();
         let result = repl.apply("abc", 0, 3, &[(1, 2)]);
@@ -258,5 +326,54 @@ mod tests {
         let repl = Replacement::parse("\\n\\t").unwrap();
         assert_eq!(repl.parts.len(), 1);
         assert!(matches!(&repl.parts[0], ReplacementPart::Literal(s) if s == "nt"));
+    }
+
+    #[test]
+    fn test_apply_named_backref() {
+        let repl = Replacement::parse("\\g{name}").unwrap();
+
+        // Create named groups mapping: "name" -> group 1
+        let mut named = HashMap::new();
+        named.insert("name".to_string(), 1);
+
+        // Match "hello world", group 1 is "hello" at 0-5
+        let result = repl.apply_with_names("hello world", 0, 11, &[(0, 5)], &named);
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn test_apply_named_backref_with_literal() {
+        let repl = Replacement::parse("result: \\g{name}!").unwrap();
+
+        let mut named = HashMap::new();
+        named.insert("name".to_string(), 1);
+
+        // Match "hello", group 1 is "hello"
+        let result = repl.apply_with_names("hello", 0, 5, &[(0, 5)], &named);
+        assert_eq!(result, "result: hello!");
+    }
+
+    #[test]
+    fn test_apply_mixed_named_and_numbered() {
+        let repl = Replacement::parse(r"\g{name}-\1-\G").unwrap();
+
+        let mut named = HashMap::new();
+        named.insert("name".to_string(), 2); // "name" is group 2
+
+        // Groups: 1="a" (0,1), 2="b" (1,2)
+        // Match "ab" at 0-2
+        let result = repl.apply_with_names("ab", 0, 2, &[(0, 1), (1, 2)], &named);
+        assert_eq!(result, "b-a-ab");
+    }
+
+    #[test]
+    fn test_apply_missing_named_backref() {
+        let repl = Replacement::parse("\\g{missing}").unwrap();
+
+        let named = HashMap::new(); // No named groups
+
+        // Should replace with empty string
+        let result = repl.apply_with_names("hello", 0, 5, &[], &named);
+        assert_eq!(result, "");
     }
 }

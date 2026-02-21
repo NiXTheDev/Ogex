@@ -81,9 +81,12 @@ fn cmd_test(pattern: &str, input: &str, verbose: bool) {
         println!("  Position: {}..{}", m.start, m.end);
         println!("  Match:    {}", m.as_str(input).green());
 
-        if verbose && !m.groups.is_empty() {
+        // Always show groups if present
+        if !m.groups.is_empty() || !m.named_groups.is_empty() {
             println!();
             println!("{}", "Capture groups:".bold());
+
+            // Show numbered groups
             for (idx, (start, end)) in &m.groups {
                 println!(
                     "  Group {}: {}..{} = {}",
@@ -93,6 +96,25 @@ fn cmd_test(pattern: &str, input: &str, verbose: bool) {
                     &input[*start..*end].green()
                 );
             }
+
+            // Show named groups
+            for (name, (start, end)) in &m.named_groups {
+                println!(
+                    "  Group ({}): {}..{} = {}",
+                    name.cyan(),
+                    start,
+                    end,
+                    &input[*start..*end].green()
+                );
+            }
+        }
+
+        // Verbose mode shows additional debug info
+        if verbose {
+            println!();
+            println!("{}", "Debug info:".bold());
+            println!("  Total numbered groups: {}", m.groups.len());
+            println!("  Total named groups: {}", m.named_groups.len());
         }
     } else {
         println!("{}", "✗ No match".red());

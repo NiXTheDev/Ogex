@@ -5,7 +5,7 @@
 
 use crate::ast::ClassItem;
 use crate::nfa::{Nfa, StateId, Transition};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// A match result
 #[derive(Debug, Clone, PartialEq)]
@@ -101,98 +101,160 @@ impl Regex {
     }
 }
 
+/// A state in the NFA simulation that includes capture group information
+#[derive(Debug, Clone)]
+struct SimState {
+    state_id: StateId,
+    groups: HashMap<u32, (usize, usize)>,
+}
+
+impl SimState {
+    fn new(state_id: StateId) -> Self {
+        SimState {
+            state_id,
+            groups: HashMap::new(),
+        }
+    }
+
+    fn with_groups(state_id: StateId, groups: HashMap<u32, (usize, usize)>) -> Self {
+        SimState { state_id, groups }
+    }
+}
+
 /// NFA simulator for pattern matching
 struct NfaSimulator<'a> {
     nfa: &'a Nfa,
-    #[allow(dead_code)]
-    input: &'a str,
+    _input: &'a str,
     input_chars: Vec<char>,
     start_pos: usize,
-    current_states: HashSet<StateId>,
-    groups: HashMap<u32, (usize, usize)>,
-    #[allow(dead_code)]
-    group_stack: Vec<(u32, usize)>,
-    #[allow(dead_code)]
-    next_group_id: u32,
 }
 
 impl<'a> NfaSimulator<'a> {
     fn new(nfa: &'a Nfa, input: &'a str, start_pos: usize) -> Self {
-        let input_chars: Vec<char> = input.chars().collect();
-        let mut current_states = HashSet::new();
-        current_states.insert(nfa.start);
-
         NfaSimulator {
             nfa,
-            input,
-            input_chars,
+            _input: input,
+            input_chars: input.chars().collect(),
             start_pos,
-            current_states,
-            groups: HashMap::new(),
-            group_stack: Vec::new(),
-            next_group_id: 1,
         }
     }
 
     fn run(&mut self) -> Option<Match> {
         let mut pos = self.start_pos;
-        let mut last_accept = None;
+        let mut last_accept: Option<(usize, HashMap<u32, (usize, usize)>)> = None;
+
+        // Initialize with start state
+        let mut current_states = vec![SimState::new(self.nfa.start)];
 
         // Apply epsilon closure to start state
-        self.current_states = self.epsilon_closure(&self.current_states);
+        current_states = self.epsilon_closure(&current_states, pos);
 
         // Check if start state is accepting (empty match)
-        if self.is_accepting_state() {
-            last_accept = Some(pos);
+        if let Some(groups) = self.find_accepting(&current_states) {
+            last_accept = Some((pos, groups));
         }
 
         while pos < self.input_chars.len() {
             let c = self.input_chars[pos];
-            self.step(c);
+            let (new_states, chars_consumed) = self.step_with_backrefs(&current_states, c, pos);
+            current_states = new_states;
 
-            if self.current_states.is_empty() {
-                // No more states, matching failed
+            if current_states.is_empty() {
                 break;
             }
 
-            pos += 1;
+            pos += chars_consumed;
 
-            if self.is_accepting_state() {
-                last_accept = Some(pos);
+            if let Some(groups) = self.find_accepting(&current_states) {
+                last_accept = Some((pos, groups));
             }
         }
 
-        // Try to reach accept state via epsilon transitions
-        self.current_states = self.epsilon_closure(&self.current_states);
-        if self.is_accepting_state() {
-            last_accept = Some(pos);
+        // Try to reach accept state via epsilon transitions (for end anchors)
+        current_states = self.epsilon_closure(&current_states, pos);
+        if let Some(groups) = self.find_accepting(&current_states) {
+            last_accept = Some((pos, groups));
         }
 
-        last_accept.map(|end| Match {
+        last_accept.map(|(end, groups)| Match {
             start: self.start_pos,
             end,
-            groups: self.groups.clone(),
+            groups,
             named_groups: HashMap::new(),
         })
     }
 
-    fn step(&mut self, c: char) {
-        let mut new_states = HashSet::new();
-        let current_states: Vec<_> = self.current_states.iter().copied().collect();
+    fn step_with_backrefs(
+        &self,
+        states: &[SimState],
+        c: char,
+        pos: usize,
+    ) -> (Vec<SimState>, usize) {
+        let mut new_states: Vec<SimState> = Vec::new();
+        let mut chars_consumed = 1; // Default: consume 1 character
 
-        for state_id in current_states {
-            for (transition, target) in &self.nfa.states[state_id].transitions {
-                if Self::transition_matches(transition, c, self.start_pos) {
-                    new_states.insert(*target);
+        for sim_state in states {
+            for (transition, target) in &self.nfa.states[sim_state.state_id].transitions {
+                match transition {
+                    Transition::Backref(group_id) => {
+                        // Try to match the backreference
+                        if let Some((start, end)) = sim_state.groups.get(group_id) {
+                            let captured: String = self.input_chars[*start..*end].iter().collect();
+                            let remaining: String = self.input_chars[pos..].iter().collect();
+
+                            if remaining.starts_with(&captured) {
+                                let consumed = captured.len().max(1);
+                                let new_state =
+                                    SimState::with_groups(*target, sim_state.groups.clone());
+                                new_states.push(new_state);
+                                chars_consumed = chars_consumed.max(consumed);
+                            }
+                        }
+                    }
+                    Transition::BackrefRelative(relative) => {
+                        // Resolve relative backreference (\g{-n})
+                        if let Some(group_id) = self.nfa.resolve_relative(*relative)
+                            && let Some((start, end)) = sim_state.groups.get(&group_id)
+                        {
+                            let captured: String = self.input_chars[*start..*end].iter().collect();
+                            let remaining: String = self.input_chars[pos..].iter().collect();
+
+                            if remaining.starts_with(&captured) {
+                                let consumed = captured.len().max(1);
+                                let new_state =
+                                    SimState::with_groups(*target, sim_state.groups.clone());
+                                new_states.push(new_state);
+                                chars_consumed = chars_consumed.max(consumed);
+                            }
+                        }
+                    }
+                    _ => {
+                        // Regular character transition
+                        if let Some(new_state) =
+                            self.try_transition(sim_state, transition, *target, c, pos)
+                        {
+                            new_states.push(new_state);
+                        }
+                    }
                 }
             }
         }
 
-        self.current_states = self.epsilon_closure(&new_states);
+        (
+            self.epsilon_closure(&new_states, pos + chars_consumed),
+            chars_consumed,
+        )
     }
 
-    fn transition_matches(transition: &Transition, c: char, start_pos: usize) -> bool {
-        match transition {
+    fn try_transition(
+        &self,
+        sim_state: &SimState,
+        transition: &Transition,
+        target: StateId,
+        c: char,
+        _pos: usize,
+    ) -> Option<SimState> {
+        let matches = match transition {
             Transition::Char(tc) => *tc == c,
             Transition::Any => true,
             Transition::CharClass { negated, items } => {
@@ -215,21 +277,72 @@ impl<'a> NfaSimulator<'a> {
                     matched
                 }
             }
-            Transition::StartAnchor => start_pos == 0,
-            Transition::EndAnchor => false,
-            _ => false,
+            _ => false, // Epsilon transitions handled in epsilon_closure
+        };
+
+        if matches {
+            let new_sim_state = SimState::with_groups(target, sim_state.groups.clone());
+            Some(new_sim_state)
+        } else {
+            None
         }
     }
 
-    fn epsilon_closure(&self, states: &HashSet<StateId>) -> HashSet<StateId> {
-        let mut closure = states.clone();
-        let mut stack: Vec<_> = states.iter().copied().collect();
+    fn epsilon_closure(&self, states: &[SimState], pos: usize) -> Vec<SimState> {
+        // Use a Vec to preserve order (important for lazy vs greedy)
+        let mut closure: Vec<SimState> = Vec::new();
+        let mut stack: Vec<SimState> = states.to_vec();
 
-        while let Some(state) = stack.pop() {
-            for (transition, target) in &self.nfa.states[state].transitions {
-                if matches!(transition, Transition::Epsilon) && !closure.contains(target) {
-                    closure.insert(*target);
-                    stack.push(*target);
+        while let Some(sim_state) = stack.pop() {
+            // Check if we already have this state
+            if closure.iter().any(|s| s.state_id == sim_state.state_id) {
+                continue;
+            }
+
+            closure.push(sim_state.clone());
+
+            for (transition, target) in &self.nfa.states[sim_state.state_id].transitions {
+                if closure.iter().any(|s| s.state_id == *target) {
+                    continue;
+                }
+
+                match transition {
+                    Transition::Epsilon => {
+                        stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                    }
+                    Transition::StartAnchor => {
+                        if self.start_pos == 0 && pos == self.start_pos {
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        }
+                    }
+                    Transition::EndAnchor => {
+                        if pos == self.input_chars.len() {
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        }
+                    }
+                    Transition::WordBoundary => {
+                        if self.is_word_boundary(pos) {
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        }
+                    }
+                    Transition::NonWordBoundary => {
+                        if !self.is_word_boundary(pos) {
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        }
+                    }
+                    Transition::GroupStart(group_id) => {
+                        let mut new_groups = sim_state.groups.clone();
+                        new_groups.insert(*group_id, (pos, pos)); // Start capturing
+                        stack.push(SimState::with_groups(*target, new_groups));
+                    }
+                    Transition::GroupEnd(group_id) => {
+                        let mut new_groups = sim_state.groups.clone();
+                        if let Some((start, _)) = new_groups.get(group_id) {
+                            new_groups.insert(*group_id, (*start, pos)); // End capturing
+                        }
+                        stack.push(SimState::with_groups(*target, new_groups));
+                    }
+                    _ => {} // Char/CharClass handled in step
                 }
             }
         }
@@ -237,8 +350,22 @@ impl<'a> NfaSimulator<'a> {
         closure
     }
 
-    fn is_accepting_state(&self) -> bool {
-        self.current_states.contains(&self.nfa.accept)
+    fn find_accepting(&self, states: &[SimState]) -> Option<HashMap<u32, (usize, usize)>> {
+        states
+            .iter()
+            .find(|s| s.state_id == self.nfa.accept)
+            .map(|s| s.groups.clone())
+    }
+
+    fn is_word_boundary(&self, pos: usize) -> bool {
+        let left_is_word = pos > 0 && self.is_word_char(self.input_chars[pos - 1]);
+        let right_is_word =
+            pos < self.input_chars.len() && self.is_word_char(self.input_chars[pos]);
+        left_is_word != right_is_word
+    }
+
+    fn is_word_char(&self, c: char) -> bool {
+        c.is_ascii_alphanumeric() || c == '_'
     }
 }
 

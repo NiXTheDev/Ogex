@@ -141,20 +141,28 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a quantifier if present
-    /// quantifier := '*' | '+' | '?' | '{' number (',' number?)? '}' '?'?
+    /// quantifier := '*' | '+?' | '?' | '{' number (',' number?)? '}' '?'?
     fn parse_quantifier(&mut self) -> Result<Option<Quantifier>, ParseError> {
-        let quantifier = match &self.current_token {
+        match &self.current_token {
             Token::Star => {
                 self.advance();
-                Quantifier::ZeroOrMore
+                Ok(Some(Quantifier::ZeroOrMore))
+            }
+            Token::StarLazy => {
+                self.advance();
+                Ok(Some(Quantifier::ZeroOrMoreLazy))
             }
             Token::Plus => {
                 self.advance();
-                Quantifier::OneOrMore
+                Ok(Some(Quantifier::OneOrMore))
+            }
+            Token::PlusLazy => {
+                self.advance();
+                Ok(Some(Quantifier::OneOrMoreLazy))
             }
             Token::Question => {
                 self.advance();
-                Quantifier::Optional
+                Ok(Some(Quantifier::Optional))
             }
             Token::LeftBrace => {
                 self.advance(); // consume '{'
@@ -176,19 +184,23 @@ impl<'a> Parser<'a> {
                 };
 
                 self.expect(Token::RightBrace)?;
-                quantifier
+
+                // Check for lazy modifier (?) after {n,m} or {n,}
+                let quantifier = if self.current_token == Token::Question {
+                    self.advance();
+                    match quantifier {
+                        Quantifier::AtLeast(n) => Quantifier::AtLeastLazy(n),
+                        Quantifier::Between(n, m) => Quantifier::BetweenLazy(n, m),
+                        _ => quantifier,
+                    }
+                } else {
+                    quantifier
+                };
+
+                Ok(Some(quantifier))
             }
-            _ => return Ok(None),
-        };
-
-        // Check for lazy modifier (?) after quantifier
-        if self.current_token == Token::Lazy {
-            self.advance();
-            // For now, we don't distinguish lazy vs greedy in the AST
-            // This would require adding lazy variants to Quantifier enum
+            _ => Ok(None),
         }
-
-        Ok(Some(quantifier))
     }
 
     /// Parse a number (for quantifiers)
@@ -248,17 +260,54 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(expr)
             }
+            Token::BackrefRelative(n) => {
+                let expr = Expr::RelativeBackreference(*n);
+                self.advance();
+                Ok(expr)
+            }
             Token::BackrefName(name) => {
                 let expr = Expr::NamedBackreference(name.clone());
                 self.advance();
                 Ok(expr)
+            }
+            Token::WordChar => {
+                self.advance();
+                Ok(Expr::Shorthand('w'))
+            }
+            Token::NonWordChar => {
+                self.advance();
+                Ok(Expr::Shorthand('W'))
+            }
+            Token::Digit => {
+                self.advance();
+                Ok(Expr::Shorthand('d'))
+            }
+            Token::NonDigit => {
+                self.advance();
+                Ok(Expr::Shorthand('D'))
+            }
+            Token::Whitespace => {
+                self.advance();
+                Ok(Expr::Shorthand('s'))
+            }
+            Token::NonWhitespace => {
+                self.advance();
+                Ok(Expr::Shorthand('S'))
+            }
+            Token::WordBoundary => {
+                self.advance();
+                Ok(Expr::WordBoundary)
+            }
+            Token::NonWordBoundary => {
+                self.advance();
+                Ok(Expr::NonWordBoundary)
             }
             Token::LeftParen => self.parse_group(),
             Token::NamedGroupStart(name) => {
                 // Direct named group without explicit paren handling
                 let name = name.clone();
                 self.advance();
-                let pattern = self.parse_sequence()?;
+                let pattern = self.parse_alternation()?;
                 self.expect(Token::RightParen)?;
                 Ok(Expr::NamedGroup {
                     name,
@@ -267,7 +316,7 @@ impl<'a> Parser<'a> {
             }
             Token::NonCapturing => {
                 self.advance();
-                let pattern = self.parse_sequence()?;
+                let pattern = self.parse_alternation()?;
                 self.expect(Token::RightParen)?;
                 Ok(Expr::NonCapturingGroup(Box::new(pattern)))
             }
@@ -289,7 +338,7 @@ impl<'a> Parser<'a> {
             Token::NamedGroupStart(name) => {
                 let name = name.clone();
                 self.advance(); // consume the name and colon
-                let pattern = self.parse_sequence()?;
+                let pattern = self.parse_alternation()?;
                 Expr::NamedGroup {
                     name,
                     pattern: Box::new(pattern),
@@ -297,12 +346,12 @@ impl<'a> Parser<'a> {
             }
             Token::NonCapturing => {
                 self.advance(); // consume '?:'
-                let pattern = self.parse_sequence()?;
+                let pattern = self.parse_alternation()?;
                 Expr::NonCapturingGroup(Box::new(pattern))
             }
             _ => {
                 // Regular capturing group
-                let pattern = self.parse_sequence()?;
+                let pattern = self.parse_alternation()?;
                 Expr::Group(Box::new(pattern))
             }
         };
@@ -502,6 +551,12 @@ mod tests {
     fn test_parse_backreference_number() {
         let expr = parse(r"\1").unwrap();
         assert_eq!(expr.to_regex_string(), "\\1");
+    }
+
+    #[test]
+    fn test_parse_backreference_relative() {
+        let expr = parse(r"\g{-1}").unwrap();
+        assert_eq!(expr.to_regex_string(), "\\g{-1}");
     }
 
     #[test]
