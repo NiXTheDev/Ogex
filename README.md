@@ -16,7 +16,8 @@ The engine is written in Rust for performance and provides bindings for multiple
 
 - ✅ **Unified Syntax**: `(name:pattern)` for named groups, `\g{name}` for backreferences
 - ✅ **Full Regex Support**: Quantifiers, alternation, character classes, anchors, groups
-- ✅ **Backreferences**: Both numbered (`\1`, `\2`) and named (`\g{name}`)
+- ✅ **Backreferences**: Numbered (`\1`, `\2`), named (`\g{name}`), and relative (`\g{-1}`)
+- ✅ **Entire Match**: `\G` for entire match in replacements
 - ✅ **Multiple Bindings**: Rust library, C FFI, WebAssembly for JavaScript
 - ✅ **CLI Tool**: `ogex` command for testing and conversion
 - ✅ **Zero Warnings**: Clean, well-tested codebase
@@ -28,7 +29,43 @@ The engine is written in Rust for performance and provides bindings for multiple
 | Named group | `(name:abc)` | `(?<name>abc)` or `(?P<name>abc)` |
 | Named backref | `\g{name}` | `\k<name>` or `\k'name'` |
 | Numbered backref | `\g{1}` | `\1` |
-| Entire match | `\g{0}` | `$&` or `\0` |
+| Relative backref | `\g{-1}` | Not supported |
+| Entire match (replacement) | `\G` | `$&` or `\0` |
+
+### Relative Backreferences (New!)
+
+Ogex supports **relative backreferences** that reference numbered groups from the end:
+
+| Syntax | Meaning |
+|--------|---------|
+| `\g{-1}` | Last numbered capture group |
+| `\g{-2}` | Second-to-last numbered capture group |
+| `\g{-n}` | nth numbered group from the end |
+
+**Important:** Relative backreferences only count **numbered (non-named)** groups.
+
+```rust
+// Example: (a)(b)(c)\g{-1} matches "abcc"
+// Numbered groups: 1=a, 2=b, 3=c
+// \g{-1} references group 3 (last numbered)
+```
+
+**With named groups:**
+```rust
+// Pattern: (name:x)(a)(b)\g{-1}
+// Numbered groups only: 2=a, 3=b (group 1 is named, excluded)
+// \g{-1} references group 3 (last numbered = "b")
+```
+
+### Entire Match Reference (New!)
+
+In replacement strings, use `\G` to reference the entire match:
+
+```rust
+// Wrap matches in brackets
+let repl = Replacement::parse(r"[\G]");
+// "hello" → "[hello]"
+```
 
 ## Quick Start
 
@@ -113,7 +150,9 @@ ogex_free_regex(regex);
 ### Backreferences
 - `\1`, `\2` - Numbered backreferences
 - `\g{name}` - Named backreference
-- `\g{0}` - Entire match
+- `\g{1}` - Numbered backreference (alternative syntax)
+- `\g{-1}`, `\g{-2}` - Relative backreferences (numbered groups from end)
+- `\G` - Entire match (replacement strings only)
 
 ## Project Structure
 
