@@ -212,13 +212,14 @@ fn test_relative_backref_multiple_groups() {
 #[test]
 fn test_relative_backref_with_named_groups() {
     // Named groups are excluded from relative indexing
-    // Pattern: (name:x)(a)(b)\g{-1}
-    // Groups: 1=(name:x) named, 2=(a) numbered, 3=(b) numbered
-    // Numbered groups indices: [2, 3]
-    // \g{-1} = last numbered = group 3 = "b"
-    let regex = Regex::new(r"(name:x)(a)(b)\g{-1}").unwrap();
-    assert!(regex.is_match("xabb")); // x, a, b, b
-    assert!(!regex.is_match("xaba"));
+    // Pattern: (a)(name:x)(b)\g{-2}
+    // Groups: 1=(a) numbered, 2=(name:x) named, 3=(b) numbered
+    // Numbered groups: [1, 3]
+    // \g{-2} = second-to-last numbered = group 1 = "a"
+    // If named were included, \g{-2} would be group 2 = "x"
+    let regex = Regex::new(r"(a)(name:x)(b)\g{-2}").unwrap();
+    assert!(regex.is_match("axba")); // a, x, b, a (matches because \g{-2}="a")
+    assert!(!regex.is_match("axbx")); // would match if named groups were included (\g{-2}="x")
 }
 
 #[test]
