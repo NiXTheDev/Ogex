@@ -1,9 +1,9 @@
 [package]
-name = "ogex"
+name = "ogex-python"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 description = "Python bindings for Ogex regex engine"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 
 [lib]
 name = "ogex"
