@@ -77,7 +77,7 @@ pub enum Expr {
     NonWordBoundary,
 }
 
-/// A character class [abc], [^abc], or [a-z]
+/// A character class `[abc]`, `[^abc]`, or `[a-z]`
 #[derive(Debug, Clone, PartialEq)]
 pub struct CharacterClass {
     /// Whether the class is negated [^...]

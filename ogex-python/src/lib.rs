@@ -26,10 +26,10 @@ impl PyRegex {
     /// Check if the pattern matches at the beginning of the string
     fn match_(&self, string: &str) -> Option<PyMatch> {
         // Check if match is at position 0
-        if let Some(m) = self.inner.find(string) {
-            if m.start == 0 {
-                return Some(PyMatch::new(m, string.to_string()));
-            }
+        if let Some(m) = self.inner.find(string)
+            && m.start == 0
+        {
+            return Some(PyMatch::new(m, string.to_string()));
         }
         None
     }
@@ -67,10 +67,9 @@ impl PyRegex {
         let max_replacements = count.unwrap_or(usize::MAX);
         let mut result = String::new();
         let mut last_end = 0;
-        let mut replacements_made = 0;
 
-        for m in self.inner.find_all(string) {
-            if replacements_made >= max_replacements {
+        for (i, m) in self.inner.find_all(string).into_iter().enumerate() {
+            if i >= max_replacements {
                 break;
             }
 
@@ -94,7 +93,6 @@ impl PyRegex {
             result.push_str(&replaced);
 
             last_end = m.end;
-            replacements_made += 1;
         }
 
         // Add remaining text
