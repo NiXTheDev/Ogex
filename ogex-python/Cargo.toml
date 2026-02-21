@@ -10,7 +10,7 @@ name = "ogex"
 crate-type = ["cdylib"]
 
 [dependencies]
-ogex-core = { path = "../ogex-core" }
+ogex_lib = { path = "../ogex", package = "ogex" }
 pyo3 = { version = "0.23", features = ["extension-module"] }
 
 [build-dependencies]

@@ -10,7 +10,7 @@ use std::collections::HashMap as StdHashMap;
 /// A compiled regex pattern
 #[pyclass(name = "Regex")]
 pub struct PyRegex {
-    inner: ogex_core::Regex,
+    inner: ogex_lib::Regex,
 }
 
 #[pymethods]
@@ -18,7 +18,7 @@ impl PyRegex {
     /// Compile a regex pattern
     #[new]
     fn new(pattern: &str) -> PyResult<Self> {
-        let regex = ogex_core::Regex::new(pattern)
+        let regex = ogex_lib::Regex::new(pattern)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         Ok(PyRegex { inner: regex })
     }
@@ -61,7 +61,7 @@ impl PyRegex {
     /// Replace matches with a replacement string
     #[pyo3(signature = (repl, string, count=None))]
     fn sub(&self, repl: &str, string: &str, count: Option<usize>) -> PyResult<String> {
-        let replacement = ogex_core::Replacement::parse(repl)
+        let replacement = ogex_lib::Replacement::parse(repl)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
         let max_replacements = count.unwrap_or(usize::MAX);
@@ -112,7 +112,7 @@ pub struct PyMatch {
 }
 
 impl PyMatch {
-    fn new(m: ogex_core::Match, input: String) -> Self {
+    fn new(m: ogex_lib::Match, input: String) -> Self {
         PyMatch {
             start: m.start,
             end: m.end,
