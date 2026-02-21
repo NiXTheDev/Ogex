@@ -1,7 +1,7 @@
 //! C API for FFI bindings
 //!
 //! This module provides a C-compatible interface for using the regex engine
-//! from other languages via FFI. All functions are marked with #[no_mangle]
+//! from other languages via FFI. All functions are marked with #[unsafe(no_mangle)]
 //! and use C calling conventions.
 
 use crate::engine::{Match, Regex};
@@ -26,41 +26,43 @@ pub struct MatchHandle {
 /// - error pointer can be null if you don't need error messages
 ///
 /// Returns a handle to the compiled regex, or null on error
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ogex_compile(
     pattern: *const c_char,
     error: *mut *mut c_char,
 ) -> *mut RegexHandle {
-    if pattern.is_null() {
-        if !error.is_null() {
-            let err = CString::new("pattern is null").unwrap();
-            *error = err.into_raw();
-        }
-        return std::ptr::null_mut();
-    }
-
-    let pattern_str = match CStr::from_ptr(pattern).to_str() {
-        Ok(s) => s,
-        Err(_) => {
+    unsafe {
+        if pattern.is_null() {
             if !error.is_null() {
-                let err = CString::new("pattern is not valid UTF-8").unwrap();
+                let err = CString::new("pattern is null").unwrap();
                 *error = err.into_raw();
             }
             return std::ptr::null_mut();
         }
-    };
 
-    match Regex::new(pattern_str) {
-        Ok(regex) => {
-            let handle = Box::new(RegexHandle { regex });
-            Box::into_raw(handle)
-        }
-        Err(e) => {
-            if !error.is_null() {
-                let err = CString::new(e.to_string()).unwrap();
-                *error = err.into_raw();
+        let pattern_str = match CStr::from_ptr(pattern).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                if !error.is_null() {
+                    let err = CString::new("pattern is not valid UTF-8").unwrap();
+                    *error = err.into_raw();
+                }
+                return std::ptr::null_mut();
             }
-            std::ptr::null_mut()
+        };
+
+        match Regex::new(pattern_str) {
+            Ok(regex) => {
+                let handle = Box::new(RegexHandle { regex });
+                Box::into_raw(handle)
+            }
+            Err(e) => {
+                if !error.is_null() {
+                    let err = CString::new(e.to_string()).unwrap();
+                    *error = err.into_raw();
+                }
+                std::ptr::null_mut()
+            }
         }
     }
 }
@@ -70,10 +72,12 @@ pub unsafe extern "C" fn ogex_compile(
 /// # Safety
 /// - handle must be a valid pointer returned by ogex_compile
 /// - handle must not be used after calling this function
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ogex_free_regex(handle: *mut RegexHandle) {
-    if !handle.is_null() {
-        drop(Box::from_raw(handle));
+    unsafe {
+        if !handle.is_null() {
+            drop(Box::from_raw(handle));
+        }
     }
 }
 
@@ -82,25 +86,24 @@ pub unsafe extern "C" fn ogex_free_regex(handle: *mut RegexHandle) {
 /// # Safety
 /// - handle must be a valid regex handle
 /// - input must be a valid null-terminated UTF-8 string
-#[no_mangle]
-pub unsafe extern "C" fn ogex_is_match(
-    handle: *const RegexHandle,
-    input: *const c_char,
-) -> c_int {
-    if handle.is_null() || input.is_null() {
-        return 0;
-    }
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ogex_is_match(handle: *const RegexHandle, input: *const c_char) -> c_int {
+    unsafe {
+        if handle.is_null() || input.is_null() {
+            return 0;
+        }
 
-    let input_str = match CStr::from_ptr(input).to_str() {
-        Ok(s) => s,
-        Err(_) => return 0,
-    };
+        let input_str = match CStr::from_ptr(input).to_str() {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
 
-    let regex = &(*handle).regex;
-    if regex.is_match(input_str) {
-        1
-    } else {
-        0
+        let regex = &(*handle).regex;
+        if regex.is_match(input_str) {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -112,41 +115,43 @@ pub unsafe extern "C" fn ogex_is_match(
 /// - error pointer can be null
 ///
 /// Returns a match handle, or null if no match found
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ogex_find(
     handle: *const RegexHandle,
     input: *const c_char,
     error: *mut *mut c_char,
 ) -> *mut MatchHandle {
-    if handle.is_null() || input.is_null() {
-        if !error.is_null() {
-            let err = CString::new("invalid handle or input").unwrap();
-            *error = err.into_raw();
-        }
-        return std::ptr::null_mut();
-    }
-
-    let input_str = match CStr::from_ptr(input).to_str() {
-        Ok(s) => s,
-        Err(_) => {
+    unsafe {
+        if handle.is_null() || input.is_null() {
             if !error.is_null() {
-                let err = CString::new("input is not valid UTF-8").unwrap();
+                let err = CString::new("invalid handle or input").unwrap();
                 *error = err.into_raw();
             }
             return std::ptr::null_mut();
         }
-    };
 
-    let regex = &(*handle).regex;
-    match regex.find(input_str) {
-        Some(match_result) => {
-            let handle = Box::new(MatchHandle {
-                match_result,
-                input: input_str.to_string(),
-            });
-            Box::into_raw(handle)
+        let input_str = match CStr::from_ptr(input).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                if !error.is_null() {
+                    let err = CString::new("input is not valid UTF-8").unwrap();
+                    *error = err.into_raw();
+                }
+                return std::ptr::null_mut();
+            }
+        };
+
+        let regex = &(*handle).regex;
+        match regex.find(input_str) {
+            Some(match_result) => {
+                let handle = Box::new(MatchHandle {
+                    match_result,
+                    input: input_str.to_string(),
+                });
+                Box::into_raw(handle)
+            }
+            None => std::ptr::null_mut(),
         }
-        None => std::ptr::null_mut(),
     }
 }
 
@@ -155,10 +160,12 @@ pub unsafe extern "C" fn ogex_find(
 /// # Safety
 /// - handle must be a valid pointer returned by ogex_find
 /// - handle must not be used after calling this function
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ogex_free_match(handle: *mut MatchHandle) {
-    if !handle.is_null() {
-        drop(Box::from_raw(handle));
+    unsafe {
+        if !handle.is_null() {
+            drop(Box::from_raw(handle));
+        }
     }
 }
 
@@ -167,12 +174,14 @@ pub unsafe extern "C" fn ogex_free_match(handle: *mut MatchHandle) {
 /// # Safety
 /// - handle must be a valid match handle
 /// - returns -1 if handle is null
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ogex_match_start(handle: *const MatchHandle) -> c_int {
-    if handle.is_null() {
-        return -1;
+    unsafe {
+        if handle.is_null() {
+            return -1;
+        }
+        (*handle).match_result.start as c_int
     }
-    (*handle).match_result.start as c_int
 }
 
 /// Get match end position
@@ -180,12 +189,14 @@ pub unsafe extern "C" fn ogex_match_start(handle: *const MatchHandle) -> c_int {
 /// # Safety
 /// - handle must be a valid match handle
 /// - returns -1 if handle is null
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ogex_match_end(handle: *const MatchHandle) -> c_int {
-    if handle.is_null() {
-        return -1;
+    unsafe {
+        if handle.is_null() {
+            return -1;
+        }
+        (*handle).match_result.end as c_int
     }
-    (*handle).match_result.end as c_int
 }
 
 /// Get the matched text
@@ -194,17 +205,19 @@ pub unsafe extern "C" fn ogex_match_end(handle: *const MatchHandle) -> c_int {
 /// - handle must be a valid match handle
 /// - returns null if handle is null
 /// - caller must free the returned string with ogex_free_string
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ogex_match_text(handle: *const MatchHandle) -> *mut c_char {
-    if handle.is_null() {
-        return std::ptr::null_mut();
-    }
+    unsafe {
+        if handle.is_null() {
+            return std::ptr::null_mut();
+        }
 
-    let m = &(*handle).match_result;
-    let text = m.as_str(&(*handle).input);
-    match CString::new(text) {
-        Ok(cstr) => cstr.into_raw(),
-        Err(_) => std::ptr::null_mut(),
+        let m = &(*handle).match_result;
+        let text = m.as_str(&(*handle).input);
+        match CString::new(text) {
+            Ok(cstr) => cstr.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
     }
 }
 
@@ -213,10 +226,12 @@ pub unsafe extern "C" fn ogex_match_text(handle: *const MatchHandle) -> *mut c_c
 /// # Safety
 /// - ptr must be a valid pointer returned by this API
 /// - ptr must not be used after calling this function
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ogex_free_string(ptr: *mut c_char) {
-    if !ptr.is_null() {
-        drop(CString::from_raw(ptr));
+    unsafe {
+        if !ptr.is_null() {
+            drop(CString::from_raw(ptr));
+        }
     }
 }
 
@@ -224,13 +239,15 @@ pub unsafe extern "C" fn ogex_free_string(ptr: *mut c_char) {
 ///
 /// # Safety
 /// - ptr must be a valid error pointer returned by this API
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ogex_free_error(ptr: *mut c_char) {
-    ogex_free_string(ptr);
+    unsafe {
+        ogex_free_string(ptr);
+    }
 }
 
 /// Get the API version
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ogex_version() -> *const c_char {
     const VERSION: &[u8] = b"0.1.0\0";
     VERSION.as_ptr() as *const c_char

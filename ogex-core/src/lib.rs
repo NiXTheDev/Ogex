@@ -31,7 +31,7 @@ pub use transpiler::{transpile, transpile_debug, TranspileResult};
 /// This is the main entry point for compiling patterns.
 /// For now, it just transpiles to legacy syntax.
 pub fn compile(input: &str) -> Result<String> {
-    transpile(input).map_err(|e| e.into())
+    transpile(input)
 }
 
 #[cfg(test)]

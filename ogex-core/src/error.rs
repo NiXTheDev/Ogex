@@ -84,7 +84,7 @@ pub enum ParseError {
 }
 
 /// A span representing a location in the source code
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
     /// Start position (inclusive)
     pub start: usize,
@@ -114,12 +114,6 @@ impl Span {
     /// Check if the span is empty
     pub fn is_empty(&self) -> bool {
         self.start == self.end
-    }
-}
-
-impl Default for Span {
-    fn default() -> Self {
-        Span { start: 0, end: 0 }
     }
 }
 
