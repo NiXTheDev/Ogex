@@ -205,7 +205,7 @@ fn sub(pattern: &str, repl: &str, string: &str, count: Option<usize>) -> PyResul
 
 /// Ogex Python module
 #[pymodule(name = "ogex")]
-fn ogex(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn ogex_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRegex>()?;
     m.add_class::<PyMatch>()?;
     m.add_function(wrap_pyfunction!(compile, m)?)?;

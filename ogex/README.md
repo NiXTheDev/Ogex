@@ -62,3 +62,14 @@ assert_eq!(result, "[hello]");
 ## License
 
 MPL-2.0
+
+## Why Ogex?
+
+The name **Ogex** comes from two parts:
+ **O** - Open to interpretation, but primarily means "**O**ne" (one regex to rule them all) or "**O**pen"
+ **gex** - The last three letters of "regex"
+
+The syntax `(name:pattern)` is more intuitive because:
+ It looks like a function call: `name(argument)`
+ The colon clearly separates name from pattern
+ It's consistent with the backreference syntax `\g{name}`

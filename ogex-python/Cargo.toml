@@ -2,11 +2,16 @@
 name = "ogex-python"
 version = "0.1.0"
 edition.workspace = true
-description = "Python bindings for Ogex regex engine"
+authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Python bindings for Ogex regex engine"
+documentation = "https://github.com/NiXTheDev/Ogex#readme"
+readme = "README.md"
 
 [lib]
-name = "ogex"
+name = "ogex_py"
 crate-type = ["cdylib"]
 
 [dependencies]
