@@ -42,8 +42,19 @@ pub enum Token {
     PlusLazy,
     /// Question `?` (optional)
     Question,
-    /// Non-capturing group marker `(?:`
     NonCapturing,
+    /// Lookahead assertion `(@>:pattern)`
+    Lookahead,
+    /// Negative lookahead assertion `(@>~:pattern)`
+    NegativeLookahead,
+    /// Lookbehind assertion `(@<:pattern)`
+    Lookbehind,
+    /// Negative lookbehind assertion `(@<~:pattern)`
+    NegativeLookbehind,
+    /// Atomic group `(@*:pattern)`
+    Atomic,
+    /// Conditional group `(@%:pattern)`
+    Conditional,
     /// A named group identifier (the name part in `(name:...)`)
     NamedGroupStart(String),
     /// An escaped character (e.g., \n, \t, \\, etc.)
@@ -98,6 +109,12 @@ impl fmt::Display for Token {
             Token::PlusLazy => write!(f, "`+?`"),
             Token::Question => write!(f, "`?`"),
             Token::NonCapturing => write!(f, "`?:`"),
+            Token::Lookahead => write!(f, "`@>:`"),
+            Token::NegativeLookahead => write!(f, "`@>~:`"),
+            Token::Lookbehind => write!(f, "`@<:`"),
+            Token::NegativeLookbehind => write!(f, "`@<~:`"),
+            Token::Atomic => write!(f, "`@*:`"),
+            Token::Conditional => write!(f, "`@%:`"),
             Token::NamedGroupStart(name) => write!(f, "named group `{}`", name),
             Token::Escape(c) => write!(f, "escape `\\{}`", c),
             Token::BackrefNumber(n) => write!(f, "backref `\\{}`", n),
@@ -277,6 +294,70 @@ impl<'a> Lexer<'a> {
 
                 if self.current_char == Some('?') {
                     self.advance(); // consume '?'
+                    // Check for @ modifier (e.g., (@>:pattern))
+                    if self.current_char == Some('@') {
+                        self.advance(); // consume '@'
+                        let modifier = match self.current_char {
+                            Some('>') => {
+                                self.advance(); // consume '>'
+                                // Check for negation ~ after >
+                                if self.current_char == Some('~') {
+                                    self.advance(); // consume ~
+                                    '~'
+                                } else {
+                                    '>'
+                                }
+                            }
+                            Some('<') => {
+                                self.advance(); // consume '<'
+                                // Check for negation ~ after <
+                                if self.current_char == Some('~') {
+                                    self.advance(); // consume ~
+                                    '~'
+                                } else {
+                                    '<'
+                                }
+                            }
+                            Some('*') => {
+                                self.advance(); // consume '*'
+                                '*'
+                            }
+                            Some('%') => {
+                                self.advance(); // consume '%'
+                                '%'
+                            }
+                            Some(':') => {
+                                // (@?:pattern) is equivalent to (?:pattern)
+                                self.advance(); // consume ':'
+                                return Token::NonCapturing;
+                            }
+                            _ => {
+                                // Invalid modifier, reset and return LeftParen
+                                self.position = start_pos;
+                                self.current_char = Some('(');
+                                self.advance();
+                                return Token::LeftParen;
+                            }
+                        };
+                        // Expect colon after modifier
+                        if self.current_char == Some(':') {
+                            self.advance(); // consume ':'
+                            return match modifier {
+                                '>' => Token::Lookahead,
+                                '~' => Token::NegativeLookahead,
+                                '<' => Token::Lookbehind,
+                                '*' => Token::Atomic,
+                                '%' => Token::Conditional,
+                                _ => {
+                                    // This shouldn't happen but handle gracefully
+                                    self.position = start_pos;
+                                    self.current_char = Some('(');
+                                    self.advance();
+                                    Token::LeftParen
+                                }
+                            };
+                        }
+                    }
                     if self.current_char == Some(':') {
                         self.advance(); // consume ':'
                         return Token::NonCapturing;
