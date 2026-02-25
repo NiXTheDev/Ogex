@@ -146,6 +146,9 @@ impl Nfa {
             Expr::Shorthand(c) => self.compile_shorthand(*c),
             Expr::WordBoundary => self.compile_word_boundary(false),
             Expr::NonWordBoundary => self.compile_word_boundary(true),
+
+            // Handle new assertion and group types
+            _ => self.compile_empty(),
         }
     }
 
