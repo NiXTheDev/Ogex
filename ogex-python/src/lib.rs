@@ -2,23 +2,25 @@
 //!
 //! This module provides Python bindings for the Ogex regex engine,
 //! offering a `re`-compatible API with Ogex's unified syntax.
-
+use ::ogex::Regex;
+use ::ogex::Match;
+use ::ogex::Replacement;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use std::collections::HashMap as StdHashMap;
 
 /// A compiled regex pattern
 #[pyclass(name = "Regex")]
- pub struct PyRegex {
-     inner: ogex::Regex,
- }
+pub struct PyRegex {
+    inner: Regex,
+}
 
 #[pymethods]
 impl PyRegex {
     /// Compile a regex pattern
     #[new]
     fn new(pattern: &str) -> PyResult<Self> {
-        let regex = ogex::Regex::new(pattern)
+        let regex = Regex::new(pattern)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(PyRegex { inner: regex })
     }
@@ -26,9 +28,7 @@ impl PyRegex {
     /// Check if the pattern matches at the beginning of the string
     fn match_(&self, string: &str) -> Option<PyMatch> {
         // Check if match is at position 0
-        if let Some(m) = self.inner.find(string)
-            && m.start == 0
-        {
+        if let Some(m) = self.inner.find(string) && m.start == 0 {
             return Some(PyMatch::new(m, string.to_string()));
         }
         None
@@ -61,7 +61,7 @@ impl PyRegex {
     /// Replace matches with a replacement string
     #[pyo3(signature = (repl, string, count=None))]
     fn sub(&self, repl: &str, string: &str, count: Option<usize>) -> PyResult<String> {
-        let replacement = ogex::Replacement::parse(repl)
+        let replacement = Replacement::parse(repl)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
         let max_replacements = count.unwrap_or(usize::MAX);
@@ -112,7 +112,7 @@ pub struct PyMatch {
 }
 
 impl PyMatch {
-    fn new(m: ogex::Match, input: String) -> Self {
+    fn new(m: Match, input: String) -> Self {
         PyMatch {
             start: m.start,
             end: m.end,

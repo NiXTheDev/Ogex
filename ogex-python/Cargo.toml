@@ -14,8 +14,9 @@ readme = "README.md"
 name = "ogex_py"
 crate-type = ["cdylib"]
 
+[dependencies]
 pyo3 = { version = "0.23", features = ["extension-module"] }
-ogex = "0.1.0"
+ogex = { path = "../ogex" }
 
 [build-dependencies]
 pyo3-build-config = "0.23"
