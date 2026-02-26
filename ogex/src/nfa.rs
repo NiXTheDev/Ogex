@@ -131,6 +131,7 @@ impl Nfa {
             Expr::NonCapturingGroup(expr) => self.compile_expr(expr),
             Expr::NamedGroup { name, pattern } => self.compile_group(pattern, Some(name.clone())),
             Expr::AtomicGroup(expr) => self.compile_expr(expr),
+            Expr::ConditionalGroup(expr) => self.compile_expr(expr),
             Expr::StartAnchor => self.compile_start_anchor(),
             Expr::EndAnchor => self.compile_end_anchor(),
             Expr::Backreference(n) => self.compile_backref(*n),
