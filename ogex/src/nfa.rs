@@ -132,6 +132,7 @@ impl Nfa {
             Expr::NamedGroup { name, pattern } => self.compile_group(pattern, Some(name.clone())),
             Expr::AtomicGroup(expr) => self.compile_expr(expr),
             Expr::ConditionalGroup(expr) => self.compile_expr(expr),
+            Expr::ModeFlagsGroup { flags: _, pattern } => self.compile_expr(pattern),
             Expr::StartAnchor => self.compile_start_anchor(),
             Expr::EndAnchor => self.compile_end_anchor(),
             Expr::Backreference(n) => self.compile_backref(*n),

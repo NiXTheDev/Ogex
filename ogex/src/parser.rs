@@ -356,6 +356,13 @@ impl<'a> Parser<'a> {
                 self.expect(Token::RightParen)?;
                 Ok(Expr::ConditionalGroup(Box::new(pattern)))
             }
+            Token::ModeFlags(flags) => {
+                let flags_owned = flags.to_string();
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::ModeFlagsGroup { flags: flags_owned, pattern: Box::new(pattern) })
+            }
             Token::LeftBracket => self.parse_char_class(),
             Token::Eof => Err(ParseError::UnexpectedEof),
             _ => Err(ParseError::UnexpectedToken {

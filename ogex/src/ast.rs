@@ -96,6 +96,9 @@ pub enum Expr {
 
     /// Conditional group (@%:pattern)
     ConditionalGroup(Box<Expr>),
+
+    /// Mode flags group (?flags:pattern)
+    ModeFlagsGroup { flags: String, pattern: Box<Expr> },
 }
 
 /// A character class `[abc]`, `[^abc]`, or `[a-z]`
@@ -273,6 +276,7 @@ impl Expr {
             Expr::NegativeLookbehind(expr) => format!("(@<~:{})", expr.to_regex_string()),
             Expr::AtomicGroup(expr) => format!("(@*:{})", expr.to_regex_string()),
             Expr::ConditionalGroup(expr) => format!("(@%:{})", expr.to_regex_string()),
+            Expr::ModeFlagsGroup { flags, pattern } => format!("(?{}:{})", flags, pattern.to_regex_string()),
         }
     }
 }

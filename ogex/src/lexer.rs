@@ -53,9 +53,9 @@ pub enum Token {
     NegativeLookbehind,
     /// Atomic group `(@*:pattern)`
     Atomic,
-    /// Conditional group `(@%:pattern)`
     Conditional,
-    /// A named group identifier (the name part in `(name:...)`)
+    /// Mode flags for pattern modification (e.g., @i:pattern)
+    ModeFlags(String),
     NamedGroupStart(String),
     /// An escaped character (e.g., \n, \t, \\, etc.)
     Escape(char),
@@ -115,6 +115,7 @@ impl fmt::Display for Token {
             Token::NegativeLookbehind => write!(f, "`@<~:`"),
             Token::Atomic => write!(f, "`@*:`"),
             Token::Conditional => write!(f, "`@%:`"),
+            Token::ModeFlags(flags) => write!(f, "mode flags `@{}:`", flags),
             Token::NamedGroupStart(name) => write!(f, "named group `{}`", name),
             Token::Escape(c) => write!(f, "escape `\\{}`", c),
             Token::BackrefNumber(n) => write!(f, "backref `\\{}`", n),
@@ -291,6 +292,62 @@ impl<'a> Lexer<'a> {
                 // Look ahead to check if this is a named group or non-capturing
                 let start_pos = self.position;
                 self.advance(); // consume '('
+                // Check for mode flags directly: (@i:pattern), (@im:pattern), etc.
+                if self.current_char == Some('@') {
+                    self.advance(); // consume '@'
+
+                    // Parse mode flags (i, m, s, x in any combination)
+                    let mut mode_flags = String::new();
+                    while let Some(c) = self.current_char {
+                        match c {
+                            'i' | 'm' | 's' | 'x' => {
+                                mode_flags.push(c);
+                                self.advance();
+                            }
+                            _ => break,
+                        }
+                    }
+
+                    // If we have mode flags and next char is ':', return ModeFlags
+                    if !mode_flags.is_empty() && self.current_char == Some(':') {
+                        self.advance(); // consume ':'
+                        return Token::ModeFlags(mode_flags);
+                    }
+
+                    // Not valid mode flags syntax, reset
+                    // (let the normal ? handling take over)
+                    self.position = start_pos;
+                    self.current_char = Some('(');
+                    self.advance();
+                }
+
+                if self.current_char == Some('?') {
+                    self.advance(); // consume '@'
+
+                    // Parse mode flags (i, m, s, x in any combination)
+                    let mut mode_flags = String::new();
+                    while let Some(c) = self.current_char {
+                        match c {
+                            'i' | 'm' | 's' | 'x' => {
+                                mode_flags.push(c);
+                                self.advance();
+                            }
+                            _ => break,
+                        }
+                    }
+
+                    // If we have mode flags and next char is ':', return ModeFlags
+                    if !mode_flags.is_empty() && self.current_char == Some(':') {
+                        self.advance(); // consume ':'
+                        return Token::ModeFlags(mode_flags);
+                    }
+
+                    // Not valid mode flags syntax, reset
+                    // (let the normal ? handling take over)
+                    self.position = start_pos;
+                    self.current_char = Some('(');
+                    self.advance();
+                }
 
                 if self.current_char == Some('?') {
                     self.advance(); // consume '?'
