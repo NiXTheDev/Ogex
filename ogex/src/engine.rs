@@ -7,6 +7,44 @@ use crate::ast::ClassItem;
 use crate::nfa::{Nfa, StateId, Transition};
 use std::collections::HashMap;
 
+/// Mode flags for regex matching
+#[derive(Debug, Clone, Default)]
+pub struct ModeFlags {
+    /// Case insensitive matching (@i)
+    pub case_insensitive: bool,
+    /// Multiline mode - ^ and $ match line boundaries (@m)
+    pub multiline: bool,
+    /// Dot matches newline (@s)
+    pub dotall: bool,
+    /// Extended mode - ignore whitespace, allow # comments (@x)
+    pub extended: bool,
+}
+
+impl ModeFlags {
+    /// Parse mode flags from a string like "imsx"
+    pub fn from_string(flags: &str) -> Self {
+        let mut mode = ModeFlags::default();
+        for c in flags.chars() {
+            match c {
+                'i' => mode.case_insensitive = true,
+                'm' => mode.multiline = true,
+                's' => mode.dotall = true,
+                'x' => mode.extended = true,
+                _ => {}
+            }
+        }
+        mode
+    }
+
+    /// Merge with another set of flags (for nested mode flags groups)
+    pub fn merge(&mut self, other: &ModeFlags) {
+        self.case_insensitive = self.case_insensitive || other.case_insensitive;
+        self.multiline = self.multiline || other.multiline;
+        self.dotall = self.dotall || other.dotall;
+        self.extended = self.extended || other.extended;
+    }
+}
+
 /// A match result
 #[derive(Debug, Clone, PartialEq)]
 pub struct Match {
@@ -255,8 +293,13 @@ impl<'a> NfaSimulator<'a> {
         _pos: usize,
     ) -> Option<SimState> {
         let matches = match transition {
-            Transition::Char(tc) => *tc == c,
-            Transition::Any => true,
+            Transition::Char(tc) => {
+                if self.nfa.mode_flags.case_insensitive {
+                    tc.to_ascii_lowercase() == c.to_ascii_lowercase()
+                } else {
+                    *tc == c
+                }
+            }
             Transition::CharClass { negated, items } => {
                 let matched = items.iter().any(|item| match item {
                     ClassItem::Char(ch) => *ch == c,
@@ -275,6 +318,14 @@ impl<'a> NfaSimulator<'a> {
                     !matched
                 } else {
                     matched
+                }
+            }
+            Transition::Any => {
+                // In dotall mode, . matches any character including newline
+                if self.nfa.mode_flags.dotall {
+                    true
+                } else {
+                    c != '\n'
                 }
             }
             _ => false, // Epsilon transitions handled in epsilon_closure
@@ -311,13 +362,31 @@ impl<'a> NfaSimulator<'a> {
                         stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
                     }
                     Transition::StartAnchor => {
-                        if self.start_pos == 0 && pos == self.start_pos {
-                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        if self.nfa.mode_flags.multiline {
+                            // In multiline mode, ^ matches at start of string or after newline
+                            let is_start = pos == self.start_pos;
+                            let is_after_newline = pos > 0 && self.input_chars.get(pos - 1) == Some(&'\n');
+                            if is_start || is_after_newline {
+                                stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                            }
+                        } else {
+                            if self.start_pos == 0 && pos == self.start_pos {
+                                stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                            }
                         }
                     }
                     Transition::EndAnchor => {
-                        if pos == self.input_chars.len() {
-                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        if self.nfa.mode_flags.multiline {
+                            // In multiline mode, $ matches at end of string or before newline
+                            let is_end = pos == self.input_chars.len();
+                            let is_before_newline = self.input_chars.get(pos) == Some(&'\n');
+                            if is_end || is_before_newline {
+                                stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                            }
+                        } else {
+                            if pos == self.input_chars.len() {
+                                stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                            }
                         }
                     }
                     Transition::WordBoundary => {
