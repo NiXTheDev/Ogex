@@ -130,6 +130,7 @@ impl Nfa {
             Expr::Group(expr) => self.compile_group(expr, None),
             Expr::NonCapturingGroup(expr) => self.compile_expr(expr),
             Expr::NamedGroup { name, pattern } => self.compile_group(pattern, Some(name.clone())),
+            Expr::AtomicGroup(expr) => self.compile_expr(expr),
             Expr::StartAnchor => self.compile_start_anchor(),
             Expr::EndAnchor => self.compile_end_anchor(),
             Expr::Backreference(n) => self.compile_backref(*n),
@@ -627,5 +628,12 @@ mod tests {
         ]);
         let nfa = Nfa::from_expr(&expr);
         assert!(nfa.states.len() >= 8);
+    }
+
+    #[test]
+    fn test_nfa_from_atomic_group() {
+        let expr = Expr::AtomicGroup(Box::new(Expr::literal('a')));
+        let nfa = Nfa::from_expr(&expr);
+        assert!(nfa.states.len() >= 2);
     }
 }
