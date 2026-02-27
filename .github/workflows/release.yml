@@ -1,11 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
-    branches:
-      - release
   pull_request:
     branches:
       - release
@@ -18,7 +13,6 @@ jobs:
     name: Release ${{ matrix.crate }}
     runs-on: ubuntu-latest
     if: >-
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') ||
       github.event_name == 'push' && github.ref == 'refs/heads/release' ||
       (github.event_name == 'pull_request' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'Release'))
     strategy:
@@ -29,7 +23,7 @@ jobs:
           - crate: ogex-cli
             publish: true
           - crate: ogex-python
-            publish: false  # Python needs maturin
+            publish: false
 
     steps:
       - name: Checkout code
@@ -71,7 +65,6 @@ jobs:
       - name: Create npm package
         run: |
           cd ogex/pkg
-          # Update package.json with scope if needed
           npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -93,10 +86,10 @@ jobs:
       - name: Install dependencies
         run: pip install build maturin
 
-      - name: Build and publish |
+      - name: Build and publish
+        run: |
           cd ogex-python
-         
-        run: python -m build
+          python -m build
           maturin publish
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
