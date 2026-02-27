@@ -4,12 +4,23 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - release
+  pull_request:
+    branches:
+      - release
+    types:
+      - closed
   workflow_dispatch:
 
 jobs:
   release:
     name: Release ${{ matrix.crate }}
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'push' && github.ref == 'refs/heads/release' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'Release'))
     strategy:
       matrix:
         include:
@@ -82,10 +93,10 @@ jobs:
       - name: Install dependencies
         run: pip install build maturin
 
-      - name: Build and publish
-        run: |
+      - name: Build and publish |
           cd ogex-python
-          python -m build
+         
+        run: python -m build
           maturin publish
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
