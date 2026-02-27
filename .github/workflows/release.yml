@@ -12,9 +12,7 @@ jobs:
   release:
     name: Release ${{ matrix.crate }}
     runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'push' && github.ref == 'refs/heads/release' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'Release'))
+    PY|    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'Release')
     strategy:
       matrix:
         include:
