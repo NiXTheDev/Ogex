@@ -314,11 +314,7 @@ impl<'a> NfaSimulator<'a> {
                         _ => false,
                     },
                 });
-                if *negated {
-                    !matched
-                } else {
-                    matched
-                }
+                if *negated { !matched } else { matched }
             }
             Transition::Any => {
                 // In dotall mode, . matches any character including newline
@@ -365,13 +361,16 @@ impl<'a> NfaSimulator<'a> {
                         if self.nfa.mode_flags.multiline {
                             // In multiline mode, ^ matches at start of string or after newline
                             let is_start = pos == self.start_pos;
-                            let is_after_newline = pos > 0 && self.input_chars.get(pos - 1) == Some(&'\n');
+                            let is_after_newline =
+                                pos > 0 && self.input_chars.get(pos - 1) == Some(&'\n');
                             if is_start || is_after_newline {
-                                stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                                stack
+                                    .push(SimState::with_groups(*target, sim_state.groups.clone()));
                             }
                         } else {
                             if self.start_pos == 0 && pos == self.start_pos {
-                                stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                                stack
+                                    .push(SimState::with_groups(*target, sim_state.groups.clone()));
                             }
                         }
                     }
@@ -381,11 +380,13 @@ impl<'a> NfaSimulator<'a> {
                             let is_end = pos == self.input_chars.len();
                             let is_before_newline = self.input_chars.get(pos) == Some(&'\n');
                             if is_end || is_before_newline {
-                                stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                                stack
+                                    .push(SimState::with_groups(*target, sim_state.groups.clone()));
                             }
                         } else {
                             if pos == self.input_chars.len() {
-                                stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                                stack
+                                    .push(SimState::with_groups(*target, sim_state.groups.clone()));
                             }
                         }
                     }

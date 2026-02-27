@@ -171,9 +171,9 @@ impl Replacement {
                     if let Some(&group_index) = named_groups.get(name)
                         && let Some(&(start, end)) =
                             groups.get((group_index as usize).saturating_sub(1))
-                        {
-                            result.push_str(&original[start..end]);
-                        }
+                    {
+                        result.push_str(&original[start..end]);
+                    }
                     // If named group doesn't exist, replace with empty string
                 }
                 ReplacementPart::EntireMatch => {

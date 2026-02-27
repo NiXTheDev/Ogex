@@ -276,7 +276,9 @@ impl Expr {
             Expr::NegativeLookbehind(expr) => format!("(@<~:{})", expr.to_regex_string()),
             Expr::AtomicGroup(expr) => format!("(@*:{})", expr.to_regex_string()),
             Expr::ConditionalGroup(expr) => format!("(@%:{})", expr.to_regex_string()),
-            Expr::ModeFlagsGroup { flags, pattern } => format!("(?{}:{})", flags, pattern.to_regex_string()),
+            Expr::ModeFlagsGroup { flags, pattern } => {
+                format!("(?{}:{})", flags, pattern.to_regex_string())
+            }
         }
     }
 }

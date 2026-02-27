@@ -2,7 +2,7 @@
 //!
 //! These tests validate that the PoC components work together correctly.
 
-use ogex::{compile, parse, transpile_debug, Lexer, Regex, Replacement};
+use ogex::{Lexer, Regex, Replacement, compile, parse, transpile_debug};
 
 #[test]
 fn test_poc_full_pipeline() {

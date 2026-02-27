@@ -2,8 +2,8 @@
 //!
 //! This module provides Python bindings for the Ogex regex engine,
 //! offering a `re`-compatible API with Ogex's unified syntax.
-use ::ogex::Regex;
 use ::ogex::Match;
+use ::ogex::Regex;
 use ::ogex::Replacement;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
@@ -28,7 +28,9 @@ impl PyRegex {
     /// Check if the pattern matches at the beginning of the string
     fn match_(&self, string: &str) -> Option<PyMatch> {
         // Check if match is at position 0
-        if let Some(m) = self.inner.find(string) && m.start == 0 {
+        if let Some(m) = self.inner.find(string)
+            && m.start == 0
+        {
             return Some(PyMatch::new(m, string.to_string()));
         }
         None
