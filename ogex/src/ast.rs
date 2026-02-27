@@ -69,12 +69,36 @@ pub enum Expr {
 
     /// Backreference by name (\g{name})
     NamedBackreference(String),
+
     /// Character class shorthand (\w, \d, \s, \W, \D, \S)
     Shorthand(char),
+
     /// Word boundary assertion (\b)
     WordBoundary,
+
     /// Non-word boundary assertion (\B)
     NonWordBoundary,
+
+    /// Positive lookahead assertion (@>:pattern)
+    Lookahead(Box<Expr>),
+
+    /// Negative lookahead assertion (@>~:pattern)
+    NegativeLookahead(Box<Expr>),
+
+    /// Positive lookbehind assertion (@<:pattern)
+    Lookbehind(Box<Expr>),
+
+    /// Negative lookbehind assertion (@<~:pattern)
+    NegativeLookbehind(Box<Expr>),
+
+    /// Atomic group (@*:pattern)
+    AtomicGroup(Box<Expr>),
+
+    /// Conditional group (@%:pattern)
+    ConditionalGroup(Box<Expr>),
+
+    /// Mode flags group (?flags:pattern)
+    ModeFlagsGroup { flags: String, pattern: Box<Expr> },
 }
 
 /// A character class `[abc]`, `[^abc]`, or `[a-z]`
@@ -246,6 +270,15 @@ impl Expr {
             Expr::Shorthand(c) => format!("\\{}", c),
             Expr::WordBoundary => "\\b".to_string(),
             Expr::NonWordBoundary => "\\B".to_string(),
+            Expr::Lookahead(expr) => format!("(@>:{})", expr.to_regex_string()),
+            Expr::NegativeLookahead(expr) => format!("(@>~:{})", expr.to_regex_string()),
+            Expr::Lookbehind(expr) => format!("(@<:{})", expr.to_regex_string()),
+            Expr::NegativeLookbehind(expr) => format!("(@<~:{})", expr.to_regex_string()),
+            Expr::AtomicGroup(expr) => format!("(@*:{})", expr.to_regex_string()),
+            Expr::ConditionalGroup(expr) => format!("(@%:{})", expr.to_regex_string()),
+            Expr::ModeFlagsGroup { flags, pattern } => {
+                format!("(?{}:{})", flags, pattern.to_regex_string())
+            }
         }
     }
 }
@@ -438,5 +471,41 @@ mod tests {
     fn test_named_backreference() {
         let expr = Expr::named_backreference("name");
         assert_eq!(expr.to_regex_string(), "\\g{name}");
+    }
+
+    #[test]
+    fn test_lookahead() {
+        let expr = Expr::Lookahead(Box::new(Expr::literal('a')));
+        assert_eq!(expr.to_regex_string(), "(@>:a)");
+    }
+
+    #[test]
+    fn test_negative_lookahead() {
+        let expr = Expr::NegativeLookahead(Box::new(Expr::literal('a')));
+        assert_eq!(expr.to_regex_string(), "(@>~:a)");
+    }
+
+    #[test]
+    fn test_lookbehind() {
+        let expr = Expr::Lookbehind(Box::new(Expr::literal('a')));
+        assert_eq!(expr.to_regex_string(), "(@<:a)");
+    }
+
+    #[test]
+    fn test_negative_lookbehind() {
+        let expr = Expr::NegativeLookbehind(Box::new(Expr::literal('a')));
+        assert_eq!(expr.to_regex_string(), "(@<~:a)");
+    }
+
+    #[test]
+    fn test_atomic_group() {
+        let expr = Expr::AtomicGroup(Box::new(Expr::literal('a')));
+        assert_eq!(expr.to_regex_string(), "(@*:a)");
+    }
+
+    #[test]
+    fn test_conditional_group() {
+        let expr = Expr::ConditionalGroup(Box::new(Expr::literal('a')));
+        assert_eq!(expr.to_regex_string(), "(@%:a)");
     }
 }

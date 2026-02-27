@@ -6,6 +6,8 @@
 use crate::ast::{ClassItem, Expr, Quantifier};
 use std::collections::{HashMap, HashSet};
 
+use crate::engine::ModeFlags;
+
 /// An NFA state ID
 pub type StateId = usize;
 
@@ -78,6 +80,8 @@ pub struct Nfa {
     /// List of numbered (non-named) group indices, in order of appearance
     /// Used for relative backreference resolution
     numbered_groups: Vec<u32>,
+    /// Mode flags for regex matching
+    pub mode_flags: ModeFlags,
 }
 
 impl Nfa {
@@ -91,6 +95,7 @@ impl Nfa {
             next_group_id: 1, // Group 0 is the entire match
             named_groups: HashMap::new(),
             numbered_groups: Vec::new(),
+            mode_flags: ModeFlags::default(),
         }
     }
 
@@ -130,6 +135,14 @@ impl Nfa {
             Expr::Group(expr) => self.compile_group(expr, None),
             Expr::NonCapturingGroup(expr) => self.compile_expr(expr),
             Expr::NamedGroup { name, pattern } => self.compile_group(pattern, Some(name.clone())),
+            Expr::AtomicGroup(expr) => self.compile_expr(expr),
+            Expr::ConditionalGroup(expr) => self.compile_expr(expr),
+            Expr::ModeFlagsGroup { flags, pattern } => {
+                // Parse the flags and merge into NFA's mode_flags
+                let parsed_flags = ModeFlags::from_string(flags);
+                self.mode_flags.merge(&parsed_flags);
+                self.compile_expr(pattern)
+            }
             Expr::StartAnchor => self.compile_start_anchor(),
             Expr::EndAnchor => self.compile_end_anchor(),
             Expr::Backreference(n) => self.compile_backref(*n),
@@ -146,6 +159,9 @@ impl Nfa {
             Expr::Shorthand(c) => self.compile_shorthand(*c),
             Expr::WordBoundary => self.compile_word_boundary(false),
             Expr::NonWordBoundary => self.compile_word_boundary(true),
+
+            // Handle new assertion and group types
+            _ => self.compile_empty(),
         }
     }
 
@@ -624,5 +640,12 @@ mod tests {
         ]);
         let nfa = Nfa::from_expr(&expr);
         assert!(nfa.states.len() >= 8);
+    }
+
+    #[test]
+    fn test_nfa_from_atomic_group() {
+        let expr = Expr::AtomicGroup(Box::new(Expr::literal('a')));
+        let nfa = Nfa::from_expr(&expr);
+        assert!(nfa.states.len() >= 2);
     }
 }

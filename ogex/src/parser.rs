@@ -320,6 +320,52 @@ impl<'a> Parser<'a> {
                 self.expect(Token::RightParen)?;
                 Ok(Expr::NonCapturingGroup(Box::new(pattern)))
             }
+            Token::Lookahead => {
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::Lookahead(Box::new(pattern)))
+            }
+            Token::NegativeLookahead => {
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::NegativeLookahead(Box::new(pattern)))
+            }
+            Token::Lookbehind => {
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::Lookbehind(Box::new(pattern)))
+            }
+            Token::NegativeLookbehind => {
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::NegativeLookbehind(Box::new(pattern)))
+            }
+            Token::Atomic => {
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::AtomicGroup(Box::new(pattern)))
+            }
+            Token::Conditional => {
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::ConditionalGroup(Box::new(pattern)))
+            }
+            Token::ModeFlags(flags) => {
+                let flags_owned = flags.to_string();
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::ModeFlagsGroup {
+                    flags: flags_owned,
+                    pattern: Box::new(pattern),
+                })
+            }
             Token::LeftBracket => self.parse_char_class(),
             Token::Eof => Err(ParseError::UnexpectedEof),
             _ => Err(ParseError::UnexpectedToken {

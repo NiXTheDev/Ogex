@@ -22,9 +22,9 @@ pub use error::{LexerErrorKind, ParseError, RegexError, Result, Span, SpannedErr
 pub use groups::{GroupCollector, GroupInfo, GroupRegistry, GroupRegistryError};
 pub use lexer::{Lexer, Token};
 pub use nfa::{Nfa, State, StateId, Transition};
-pub use parser::{parse, Parser};
+pub use parser::{Parser, parse};
 pub use replace::{Replacement, ReplacementError, ReplacementPart};
-pub use transpiler::{transpile, transpile_debug, TranspileResult};
+pub use transpiler::{TranspileResult, transpile, transpile_debug};
 
 /// Compile a regex pattern with custom syntax
 ///

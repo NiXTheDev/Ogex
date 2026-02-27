@@ -262,6 +262,9 @@ impl GroupCollector {
             }
 
             crate::ast::Expr::CharacterClass(_) => Ok(()),
+
+            // Handle new assertion and group types
+            _ => Ok(()),
         }
     }
 }

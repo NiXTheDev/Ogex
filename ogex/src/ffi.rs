@@ -99,11 +99,7 @@ pub unsafe extern "C" fn ogex_is_match(handle: *const RegexHandle, input: *const
         };
 
         let regex = &(*handle).regex;
-        if regex.is_match(input_str) {
-            1
-        } else {
-            0
-        }
+        if regex.is_match(input_str) { 1 } else { 0 }
     }
 }
 

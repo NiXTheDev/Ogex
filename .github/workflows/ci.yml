@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main, release, '0.1.*']
+  pull_request:
+    branches: [main, release]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+
+  test-ogex-only:
+    name: Test Ogex Core
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run ogex tests
+        run: |
+          cd ogex
+          cargo test
+          cargo test --tests
+
+      - name: Run compatibility tests
+        run: cargo test --test compatibility_tests
+
+      - name: Run integration tests
+        run: cargo test --test poc_integration_tests

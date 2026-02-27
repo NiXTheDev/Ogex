@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use ogex::{transpile, transpile_debug, Regex};
+use ogex::{Regex, transpile, transpile_debug};
 
 #[derive(Parser)]
 #[command(name = "ogex")]
