@@ -5,6 +5,20 @@
 //! - Resolving backreferences by name
 //! - Ensuring group names are unique
 //! - Providing group information during matching
+//!
+//! # Examples
+//!
+//! ```
+//! use ogex::Regex;
+//!
+//! // Using Ogex named group syntax: (name:pattern)
+//! let re = Regex::new(r"(first:\w+) (second:\w+)").unwrap();
+//! let m = re.find("hello world").unwrap();
+//!
+//! // Access numbered groups
+//! assert_eq!(m.group_str("hello world", 1), Some("hello"));
+//! assert_eq!(m.group_str("hello world", 2), Some("world"));
+//! ```
 
 use std::collections::HashMap;
 
