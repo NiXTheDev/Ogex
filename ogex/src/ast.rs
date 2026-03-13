@@ -281,6 +281,98 @@ impl Expr {
             }
         }
     }
+
+    /// Convert the AST to Ogex format: (name:pattern)
+    pub fn to_ogex_string(&self) -> String {
+        match self {
+            Expr::Empty => String::new(),
+            Expr::Literal(c) => c.to_string(),
+            Expr::Any => ".".to_string(),
+            Expr::Sequence(exprs) => exprs.iter().map(|e| e.to_ogex_string()).collect(),
+            Expr::Alternation(exprs) => {
+                let parts: Vec<_> = exprs.iter().map(|e| e.to_ogex_string()).collect();
+                parts.join("|")
+            }
+            Expr::CharacterClass(cc) => cc.to_regex_string(),
+            Expr::Quantified { expr, quantifier } => {
+                let needs_parens = matches!(expr.as_ref(), Expr::Alternation(_));
+                let expr_str = if needs_parens {
+                    format!("(?:{})", expr.to_ogex_string())
+                } else {
+                    expr.to_ogex_string()
+                };
+                format!("{}{}", expr_str, quantifier.to_regex_string())
+            }
+            Expr::Group(expr) => format!("({})", expr.to_ogex_string()),
+            Expr::NonCapturingGroup(expr) => format!("(@?:{})", expr.to_ogex_string()),
+            Expr::NamedGroup { name, pattern } => {
+                format!("({}:{})", name, pattern.to_ogex_string())
+            }
+            Expr::StartAnchor => "^".to_string(),
+            Expr::EndAnchor => "$".to_string(),
+            Expr::Backreference(n) => format!("\\{}", n),
+            Expr::RelativeBackreference(n) => format!("\\g{{{}}}", n),
+            Expr::NamedBackreference(name) => format!("\\g{{{}}}", name),
+            Expr::Shorthand(c) => format!("\\{}", c),
+            Expr::WordBoundary => "\\b".to_string(),
+            Expr::NonWordBoundary => "\\B".to_string(),
+            Expr::Lookahead(expr) => format!("(@>:{})", expr.to_ogex_string()),
+            Expr::NegativeLookahead(expr) => format!("(@>~:{})", expr.to_ogex_string()),
+            Expr::Lookbehind(expr) => format!("(@<:{})", expr.to_ogex_string()),
+            Expr::NegativeLookbehind(expr) => format!("(@<~:{})", expr.to_ogex_string()),
+            Expr::AtomicGroup(expr) => format!("(@*:{})", expr.to_ogex_string()),
+            Expr::ConditionalGroup(expr) => format!("(@%:{})", expr.to_ogex_string()),
+            Expr::ModeFlagsGroup { flags, pattern } => {
+                format!("(@{}:{})", flags, pattern.to_ogex_string())
+            }
+        }
+    }
+
+    /// Convert the AST to Python format: (?P<name>pattern)
+    pub fn to_python_string(&self) -> String {
+        match self {
+            Expr::Empty => String::new(),
+            Expr::Literal(c) => c.to_string(),
+            Expr::Any => ".".to_string(),
+            Expr::Sequence(exprs) => exprs.iter().map(|e| e.to_python_string()).collect(),
+            Expr::Alternation(exprs) => {
+                let parts: Vec<_> = exprs.iter().map(|e| e.to_python_string()).collect();
+                parts.join("|")
+            }
+            Expr::CharacterClass(cc) => cc.to_regex_string(),
+            Expr::Quantified { expr, quantifier } => {
+                let needs_parens = matches!(expr.as_ref(), Expr::Alternation(_));
+                let expr_str = if needs_parens {
+                    format!("(?:{})", expr.to_python_string())
+                } else {
+                    expr.to_python_string()
+                };
+                format!("{}{}", expr_str, quantifier.to_regex_string())
+            }
+            Expr::Group(expr) => format!("({})", expr.to_python_string()),
+            Expr::NonCapturingGroup(expr) => format!("(?:{})", expr.to_python_string()),
+            Expr::NamedGroup { name, pattern } => {
+                format!("(?P<{}>{})", name, pattern.to_python_string())
+            }
+            Expr::StartAnchor => "^".to_string(),
+            Expr::EndAnchor => "$".to_string(),
+            Expr::Backreference(n) => format!("\\{}", n),
+            Expr::RelativeBackreference(n) => format!("\\g{{{}}}", n),
+            Expr::NamedBackreference(name) => format!("(?P={})", name),
+            Expr::Shorthand(c) => format!("\\{}", c),
+            Expr::WordBoundary => "\\b".to_string(),
+            Expr::NonWordBoundary => "\\B".to_string(),
+            Expr::Lookahead(expr) => format!("(?={})", expr.to_python_string()),
+            Expr::NegativeLookahead(expr) => format!("(?!{})", expr.to_python_string()),
+            Expr::Lookbehind(expr) => format!("(?<={})", expr.to_python_string()),
+            Expr::NegativeLookbehind(expr) => format!("(?<!{})", expr.to_python_string()),
+            Expr::AtomicGroup(expr) => format!("(*atomic:{})", expr.to_python_string()),
+            Expr::ConditionalGroup(expr) => format!("((?({}))", expr.to_python_string()),
+            Expr::ModeFlagsGroup { flags, pattern } => {
+                format!("(?{}:{})", flags, pattern.to_python_string())
+            }
+        }
+    }
 }
 
 impl fmt::Display for Expr {

@@ -1,12 +1,14 @@
-//! Transpiler for converting custom regex syntax to legacy syntax
+//! Transpiler for converting regex syntax between flavors
 //!
-//! This module provides functionality to convert patterns using our custom
-//! syntax `(name:pattern)` to the legacy syntax `(?<name>pattern)`.
+//! This module provides functionality to convert patterns between:
+//! - Ogex syntax: `(name:pattern)`
+//! - PCRE/.NET syntax: `(?<name>pattern)`
+//! - Python syntax: `(?P<name>pattern)`
 
 use crate::error::Result;
 use crate::parser::parse;
 
-/// Transpile a custom regex pattern to legacy syntax
+/// Transpile Ogex to legacy/PCRE syntax
 ///
 /// # Example
 /// ```
@@ -20,6 +22,18 @@ pub fn transpile(input: &str) -> Result<String> {
     Ok(ast.to_string())
 }
 
+/// Transpile Ogex to Python syntax
+pub fn transpile_to_python(input: &str) -> Result<String> {
+    let ast = parse(input)?;
+    Ok(ast.to_python_string())
+}
+
+/// Transpile Ogex to Ogex format (for validation)
+pub fn transpile_to_ogex(input: &str) -> Result<String> {
+    let ast = parse(input)?;
+    Ok(ast.to_ogex_string())
+}
+
 /// Transpile with verbose output for debugging
 pub fn transpile_debug(input: &str) -> Result<TranspileResult> {
     let ast = parse(input)?;
@@ -30,6 +44,44 @@ pub fn transpile_debug(input: &str) -> Result<TranspileResult> {
         ast: format!("{:?}", ast),
         output,
     })
+}
+
+/// Convert a pattern to all supported flavors
+pub fn convert_all(input: &str) -> Result<ConvertResult> {
+    let ast = parse(input)?;
+
+    Ok(ConvertResult {
+        input: input.to_string(),
+        ogex: ast.to_ogex_string(),
+        python: ast.to_python_string(),
+        pcre: ast.to_string(), // to_string() is PCRE format
+    })
+}
+
+/// Result of converting to all flavors
+#[derive(Debug, Clone)]
+pub struct ConvertResult {
+    /// The original input pattern
+    pub input: String,
+    /// Ogex format: (name:pattern)
+    pub ogex: String,
+    /// Python format: (?P<name>pattern)
+    pub python: String,
+    /// PCRE format: (?<name>pattern)
+    pub pcre: String,
+}
+
+impl ConvertResult {
+    /// Print a formatted report of all conversions
+    pub fn report(&self) {
+        println!("Conversion Result");
+        println!("================");
+        println!("Input:  {}", self.input);
+        println!();
+        println!("Ogex:   {}", self.ogex);
+        println!("Python: {}", self.python);
+        println!("PCRE:   {}", self.pcre);
+    }
 }
 
 /// Result of a transpilation with debug information

@@ -1,6 +1,9 @@
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use ogex::{Regex, transpile, transpile_debug};
+use ogex::{
+    convert_all, transpile, transpile_debug, transpile_to_ogex, transpile_to_python, ConvertResult,
+    Regex, TranspileResult,
+};
 
 #[derive(Parser)]
 #[command(name = "ogex")]
@@ -23,10 +26,19 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Convert custom syntax to legacy regex syntax
+    /// Convert regex syntax between flavors
     Convert {
-        /// The pattern to convert
-        pattern: String,
+        /// The pattern to convert (optional - shows help if not provided)
+        pattern: Option<String>,
+        /// Convert FROM legacy syntax TO Ogex syntax
+        #[arg(long)]
+        ogex: bool,
+        /// Output as Python syntax: (?P<name>pattern)
+        #[arg(long)]
+        python: bool,
+        /// Output as PCRE syntax: (?<name>pattern)
+        #[arg(long)]
+        pcre: bool,
         /// Show AST debug output
         #[arg(short, long)]
         debug: bool,
@@ -56,7 +68,13 @@ fn main() {
             input,
             verbose,
         } => cmd_test(&pattern, &input, verbose),
-        Commands::Convert { pattern, debug } => cmd_convert(&pattern, debug),
+        Commands::Convert {
+            pattern,
+            ogex,
+            python,
+            pcre,
+            debug,
+        } => cmd_convert(pattern.as_deref(), ogex, python, pcre, debug),
         Commands::Find { pattern, input } => cmd_find(&pattern, &input),
         Commands::Match { pattern, input } => cmd_match(&pattern, &input),
     }
@@ -121,10 +139,38 @@ fn cmd_test(pattern: &str, input: &str, verbose: bool) {
     }
 }
 
-fn cmd_convert(pattern: &str, debug: bool) {
+fn cmd_convert(pattern: Option<&str>, to_ogex: bool, to_python: bool, to_pcre: bool, debug: bool) {
+    // Show help if no pattern provided
+    let pattern = match pattern {
+        Some(p) => p,
+        None => {
+            println!(
+                "{}",
+                "ogex convert - Convert regex syntax between flavors".bold()
+            );
+            println!();
+            println!("Usage:");
+            println!(
+                "  ogex convert \"(name:pattern)\"           Convert to all flavors (default)"
+            );
+            println!("  ogex convert --ogex \"(?<name>p)\"       Convert legacy TO Ogex");
+            println!("  ogex convert --python \"(?P<name>p)\"    Output as Python syntax");
+            println!("  ogex convert --pcre \"(?<name>p)\"       Output as PCRE syntax");
+            println!();
+            println!("Flavors:");
+            println!("  Ogex:   (name:pattern)     - Ogex native syntax");
+            println!("  Python: (?P<name>pattern)  - Python re module syntax");
+            println!("  PCRE:   (?<name>pattern)   - PCRE/.NET syntax");
+            return;
+        }
+    };
+
     println!("{}", "Converting pattern...".bold());
     println!("  Input:  {}", pattern.cyan());
     println!();
+
+    // Determine output mode
+    let show_all = !to_ogex && !to_python && !to_pcre;
 
     if debug {
         match transpile_debug(pattern) {
@@ -136,11 +182,38 @@ fn cmd_convert(pattern: &str, debug: bool) {
                 std::process::exit(1);
             }
         }
-    } else {
-        match transpile(pattern) {
+    } else if show_all {
+        // Show all conversions
+        match convert_all(pattern) {
             Ok(result) => {
-                println!("{}", "Output:".bold());
-                println!("  {}", result.green());
+                result.report();
+            }
+            Err(e) => {
+                eprintln!("{} {}", "Error:".red().bold(), e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        // Show specific conversion
+        let result = if to_ogex {
+            transpile_to_ogex(pattern)
+        } else if to_python {
+            transpile_to_python(pattern)
+        } else {
+            transpile(pattern) // default to PCRE
+        };
+
+        match result {
+            Ok(output) => {
+                let label = if to_ogex {
+                    "Ogex"
+                } else if to_python {
+                    "Python"
+                } else {
+                    "PCRE"
+                };
+                println!("{}:", label.bold());
+                println!("  {}", output.green());
             }
             Err(e) => {
                 eprintln!("{} {}", "Error:".red().bold(), e);

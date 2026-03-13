@@ -24,7 +24,7 @@ pub use lexer::{Lexer, Token};
 pub use nfa::{Nfa, State, StateId, Transition};
 pub use parser::{Parser, parse};
 pub use replace::{Replacement, ReplacementError, ReplacementPart};
-pub use transpiler::{TranspileResult, transpile, transpile_debug};
+pub use transpiler::{ConvertResult, TranspileResult, convert_all, transpile, transpile_debug, transpile_to_ogex, transpile_to_python};
 
 /// Compile a regex pattern with custom syntax
 ///
