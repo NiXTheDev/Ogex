@@ -177,6 +177,7 @@ impl<'a> NfaSimulator<'a> {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn run(&mut self) -> Option<Match> {
         let mut pos = self.start_pos;
         let mut last_accept: Option<(usize, HashMap<u32, (usize, usize)>)> = None;
@@ -295,7 +296,7 @@ impl<'a> NfaSimulator<'a> {
         let matches = match transition {
             Transition::Char(tc) => {
                 if self.nfa.mode_flags.case_insensitive {
-                    tc.to_ascii_lowercase() == c.to_ascii_lowercase()
+                    tc.eq_ignore_ascii_case(&c)
                 } else {
                     *tc == c
                 }
@@ -367,11 +368,9 @@ impl<'a> NfaSimulator<'a> {
                                 stack
                                     .push(SimState::with_groups(*target, sim_state.groups.clone()));
                             }
-                        } else {
-                            if self.start_pos == 0 && pos == self.start_pos {
-                                stack
-                                    .push(SimState::with_groups(*target, sim_state.groups.clone()));
-                            }
+                        } else if self.start_pos == 0 && pos == self.start_pos {
+                            stack
+                                .push(SimState::with_groups(*target, sim_state.groups.clone()));
                         }
                     }
                     Transition::EndAnchor => {
@@ -383,11 +382,9 @@ impl<'a> NfaSimulator<'a> {
                                 stack
                                     .push(SimState::with_groups(*target, sim_state.groups.clone()));
                             }
-                        } else {
-                            if pos == self.input_chars.len() {
-                                stack
-                                    .push(SimState::with_groups(*target, sim_state.groups.clone()));
-                            }
+                        } else if pos == self.input_chars.len() {
+                            stack
+                                .push(SimState::with_groups(*target, sim_state.groups.clone()));
                         }
                     }
                     Transition::WordBoundary => {

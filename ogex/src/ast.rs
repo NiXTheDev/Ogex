@@ -456,6 +456,7 @@ impl CharacterClass {
 
 impl Quantifier {
     /// Convert quantifier to regex string
+    #[allow(clippy::wrong_self_convention)]
     fn to_regex_string(&self) -> String {
         match self {
             Quantifier::ZeroOrMore => "*".to_string(),
