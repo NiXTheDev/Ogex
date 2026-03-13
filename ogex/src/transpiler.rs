@@ -19,7 +19,7 @@ use crate::parser::parse;
 /// ```
 pub fn transpile(input: &str) -> Result<String> {
     let ast = parse(input)?;
-    Ok(ast.to_string())
+    Ok(ast.to_pcre_string())
 }
 
 /// Transpile Ogex to Python syntax
@@ -54,7 +54,7 @@ pub fn convert_all(input: &str) -> Result<ConvertResult> {
         input: input.to_string(),
         ogex: ast.to_ogex_string(),
         python: ast.to_python_string(),
-        pcre: ast.to_string(), // to_string() is PCRE format
+        pcre: ast.to_pcre_string(),
     })
 }
 
