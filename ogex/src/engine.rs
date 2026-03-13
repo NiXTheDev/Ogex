@@ -369,8 +369,7 @@ impl<'a> NfaSimulator<'a> {
                                     .push(SimState::with_groups(*target, sim_state.groups.clone()));
                             }
                         } else if self.start_pos == 0 && pos == self.start_pos {
-                            stack
-                                .push(SimState::with_groups(*target, sim_state.groups.clone()));
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
                         }
                     }
                     Transition::EndAnchor => {
@@ -383,8 +382,7 @@ impl<'a> NfaSimulator<'a> {
                                     .push(SimState::with_groups(*target, sim_state.groups.clone()));
                             }
                         } else if pos == self.input_chars.len() {
-                            stack
-                                .push(SimState::with_groups(*target, sim_state.groups.clone()));
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
                         }
                     }
                     Transition::WordBoundary => {
