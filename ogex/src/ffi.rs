@@ -7,6 +7,7 @@
 use crate::engine::{Match, Regex};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
+use std::panic::catch_unwind;
 
 /// Opaque handle to a compiled regex
 pub struct RegexHandle {
@@ -17,6 +18,17 @@ pub struct RegexHandle {
 pub struct MatchHandle {
     match_result: Match,
     input: String, // Keep input alive for string references
+}
+
+/// Helper to set error message
+fn set_error(error: *mut *mut c_char, msg: &str) {
+    if !error.is_null() {
+        if let Ok(err) = CString::new(msg) {
+            unsafe {
+                *error = err.into_raw();
+            }
+        }
+    }
 }
 
 /// Compile a regex pattern
@@ -31,23 +43,21 @@ pub unsafe extern "C" fn ogex_compile(
     pattern: *const c_char,
     error: *mut *mut c_char,
 ) -> *mut RegexHandle {
-    unsafe {
-        if pattern.is_null() {
-            if !error.is_null() {
-                let err = CString::new("pattern is null").unwrap();
-                *error = err.into_raw();
-            }
-            return std::ptr::null_mut();
-        }
+    // Validate inputs first (outside catch_unwind for clarity)
+    if pattern.is_null() {
+        set_error(error, "pattern is null");
+        return std::ptr::null_mut();
+    }
 
-        let pattern_str = match CStr::from_ptr(pattern).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                if !error.is_null() {
-                    let err = CString::new("pattern is not valid UTF-8").unwrap();
-                    *error = err.into_raw();
+    let result = catch_unwind(|| {
+        // SAFETY: pattern is checked non-null above, and caller guarantees valid UTF-8
+        let pattern_str = unsafe {
+            match CStr::from_ptr(pattern).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    set_error(error, "pattern is not valid UTF-8");
+                    return std::ptr::null_mut();
                 }
-                return std::ptr::null_mut();
             }
         };
 
@@ -57,12 +67,17 @@ pub unsafe extern "C" fn ogex_compile(
                 Box::into_raw(handle)
             }
             Err(e) => {
-                if !error.is_null() {
-                    let err = CString::new(e.to_string()).unwrap();
-                    *error = err.into_raw();
-                }
+                set_error(error, &e.to_string());
                 std::ptr::null_mut()
             }
+        }
+    });
+
+    match result {
+        Ok(val) => val,
+        Err(_) => {
+            set_error(error, "panic during regex compilation");
+            std::ptr::null_mut()
         }
     }
 }
@@ -88,18 +103,30 @@ pub unsafe extern "C" fn ogex_free_regex(handle: *mut RegexHandle) {
 /// - input must be a valid null-terminated UTF-8 string
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ogex_is_match(handle: *const RegexHandle, input: *const c_char) -> c_int {
-    unsafe {
-        if handle.is_null() || input.is_null() {
-            return 0;
-        }
+    if handle.is_null() || input.is_null() {
+        return 0;
+    }
 
-        let input_str = match CStr::from_ptr(input).to_str() {
-            Ok(s) => s,
-            Err(_) => return 0,
+    let result = catch_unwind(|| {
+        // SAFETY: handles are checked non-null above
+        let input_str = unsafe {
+            match CStr::from_ptr(input).to_str() {
+                Ok(s) => s,
+                Err(_) => return 0,
+            }
         };
 
-        let regex = &(*handle).regex;
-        if regex.is_match(input_str) { 1 } else { 0 }
+        let regex = &unsafe { &(*handle).regex };
+        if regex.is_match(input_str) {
+            1
+        } else {
+            0
+        }
+    });
+
+    match result {
+        Ok(val) => val,
+        Err(_) => 0,
     }
 }
 
@@ -117,27 +144,25 @@ pub unsafe extern "C" fn ogex_find(
     input: *const c_char,
     error: *mut *mut c_char,
 ) -> *mut MatchHandle {
-    unsafe {
-        if handle.is_null() || input.is_null() {
-            if !error.is_null() {
-                let err = CString::new("invalid handle or input").unwrap();
-                *error = err.into_raw();
-            }
-            return std::ptr::null_mut();
-        }
+    // Validate inputs first
+    if handle.is_null() || input.is_null() {
+        set_error(error, "invalid handle or input");
+        return std::ptr::null_mut();
+    }
 
-        let input_str = match CStr::from_ptr(input).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                if !error.is_null() {
-                    let err = CString::new("input is not valid UTF-8").unwrap();
-                    *error = err.into_raw();
+    let result = catch_unwind(|| {
+        // SAFETY: handles are checked non-null above
+        let input_str = unsafe {
+            match CStr::from_ptr(input).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    set_error(error, "input is not valid UTF-8");
+                    return std::ptr::null_mut();
                 }
-                return std::ptr::null_mut();
             }
         };
 
-        let regex = &(*handle).regex;
+        let regex = unsafe { &(*handle).regex };
         match regex.find(input_str) {
             Some(match_result) => {
                 let handle = Box::new(MatchHandle {
@@ -147,6 +172,14 @@ pub unsafe extern "C" fn ogex_find(
                 Box::into_raw(handle)
             }
             None => std::ptr::null_mut(),
+        }
+    });
+
+    match result {
+        Ok(val) => val,
+        Err(_) => {
+            set_error(error, "panic during regex find");
+            std::ptr::null_mut()
         }
     }
 }
