@@ -349,8 +349,14 @@ impl<'a> Lexer<'a> {
                     self.advance();
                 }
 
-                if self.current_char == Some('?') {
-                    self.advance(); // consume '?'
+                // Handle (?...) or (@...) syntax
+                if self.current_char == Some('?') || self.current_char == Some('@') {
+                    // If @, don't consume yet - handle in modifier matching
+                    if self.current_char == Some('@') {
+                        // Will be consumed in modifier matching
+                    } else {
+                        self.advance(); // consume '?'
+                    }
                     // Check for @ modifier (e.g., (@>:pattern))
                     if self.current_char == Some('@') {
                         self.advance(); // consume '@'
@@ -383,6 +389,15 @@ impl<'a> Lexer<'a> {
                                 self.advance(); // consume '%'
                                 '%'
                             }
+                            Some('?') => {
+                                // (@?:pattern) is non-capturing group
+                                self.advance(); // consume '?'
+                                // Consume the colon separator
+                                if self.current_char == Some(':') {
+                                    self.advance(); // consume ':'
+                                }
+                                return Token::NonCapturing;
+                            }
                             Some(':') => {
                                 // (@?:pattern) is equivalent to (?:pattern)
                                 self.advance(); // consume ':'
@@ -405,6 +420,7 @@ impl<'a> Lexer<'a> {
                                 '<' => Token::Lookbehind,
                                 '*' => Token::Atomic,
                                 '%' => Token::Conditional,
+                                '?' => Token::NonCapturing,
                                 _ => {
                                     // This shouldn't happen but handle gracefully
                                     self.position = start_pos;
@@ -435,6 +451,17 @@ impl<'a> Lexer<'a> {
                     if self.current_char == Some(':') {
                         self.advance(); // consume the colon
                         return Token::NamedGroupStart(name);
+                    }
+                    // Check for @? after name (named non-capturing group)
+                    else if self.current_char == Some('@') {
+                        self.advance(); // consume @
+                        if self.current_char == Some('?') {
+                            self.advance(); // consume ?
+                            if self.current_char == Some(':') {
+                                self.advance(); // consume :
+                                return Token::NamedGroupStart(name); // named non-capturing
+                            }
+                        }
                     }
                 }
 

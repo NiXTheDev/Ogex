@@ -99,7 +99,11 @@ pub unsafe extern "C" fn ogex_is_match(handle: *const RegexHandle, input: *const
         };
 
         let regex = &(*handle).regex;
-        if regex.is_match(input_str) { 1 } else { 0 }
+        if regex.is_match(input_str) {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -243,6 +247,10 @@ pub unsafe extern "C" fn ogex_free_error(ptr: *mut c_char) {
 }
 
 /// Get the API version
+///
+/// Returns a pointer to a static, null-terminated string containing the library version.
+/// The string does not need to be freed by the caller. The returned pointer is valid
+/// for the lifetime of the program.
 #[unsafe(no_mangle)]
 pub extern "C" fn ogex_version() -> *const c_char {
     const VERSION: &[u8] = b"0.1.0\0";
