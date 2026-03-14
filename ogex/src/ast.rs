@@ -38,6 +38,8 @@ pub enum Expr {
         expr: Box<Expr>,
         /// The quantifier
         quantifier: Quantifier,
+        /// Whether greedy (true) or lazy (false)
+        greedy: bool,
     },
 
     /// A capturing group: (...)
@@ -69,12 +71,36 @@ pub enum Expr {
 
     /// Backreference by name (\g{name})
     NamedBackreference(String),
+
     /// Character class shorthand (\w, \d, \s, \W, \D, \S)
     Shorthand(char),
+
     /// Word boundary assertion (\b)
     WordBoundary,
+
     /// Non-word boundary assertion (\B)
     NonWordBoundary,
+
+    /// Positive lookahead assertion (@>:pattern)
+    Lookahead(Box<Expr>),
+
+    /// Negative lookahead assertion (@>~:pattern)
+    NegativeLookahead(Box<Expr>),
+
+    /// Positive lookbehind assertion (@<:pattern)
+    Lookbehind(Box<Expr>),
+
+    /// Negative lookbehind assertion (@<~:pattern)
+    NegativeLookbehind(Box<Expr>),
+
+    /// Atomic group (@*:pattern)
+    AtomicGroup(Box<Expr>),
+
+    /// Conditional group (@%:pattern)
+    ConditionalGroup(Box<Expr>),
+
+    /// Mode flags group (?flags:pattern)
+    ModeFlagsGroup { flags: String, pattern: Box<Expr> },
 }
 
 /// A character class `[abc]`, `[^abc]`, or `[a-z]`
@@ -84,6 +110,70 @@ pub struct CharacterClass {
     pub negated: bool,
     /// The items in the class
     pub items: Vec<ClassItem>,
+}
+
+impl CharacterClass {
+    /// Build a lookup table for O(1) character matching
+    /// Returns a 256-bit bitset represented as [u8; 32]
+    /// Each bit represents whether a character (0-255) matches
+    pub fn to_lookup_table(&self) -> [u8; 32] {
+        let mut table = [0u8; 32];
+
+        for c in 0..=255u8 {
+            let ch = c as char;
+            let matched = self.items.iter().any(|item| match item {
+                ClassItem::Char(ch2) => *ch2 == ch,
+                ClassItem::Range(start, end) => (*start..=*end).contains(&ch),
+                ClassItem::Shorthand(sh) => match sh {
+                    'd' => ch.is_ascii_digit(),
+                    'D' => !ch.is_ascii_digit(),
+                    'w' => ch.is_ascii_alphanumeric() || ch == '_',
+                    'W' => !(ch.is_ascii_alphanumeric() || ch == '_'),
+                    's' => ch.is_ascii_whitespace(),
+                    'S' => !ch.is_ascii_whitespace(),
+                    _ => false,
+                },
+            });
+
+            // For negated classes, we match if NO item matches
+            // For non-negated, we match if ANY item matches
+            let should_match = if self.negated { !matched } else { matched };
+
+            if should_match {
+                let byte_idx = (c / 8) as usize;
+                let bit_idx = c % 8;
+                table[byte_idx] |= 1 << bit_idx;
+            }
+        }
+
+        table
+    }
+
+    /// Check if a character matches using the lookup table (O(1))
+    #[inline]
+    pub fn matches(&self, c: char, lookup: &[u8; 32]) -> bool {
+        if c as u32 > 255 {
+            // For non-ASCII, fall back to linear check
+            let matched = self.items.iter().any(|item| match item {
+                ClassItem::Char(ch2) => *ch2 == c,
+                ClassItem::Range(start, end) => (*start..=*end).contains(&c),
+                ClassItem::Shorthand(sh) => match sh {
+                    'd' => c.is_ascii_digit(),
+                    'D' => !c.is_ascii_digit(),
+                    'w' => c.is_ascii_alphanumeric() || c == '_',
+                    'W' => !(c.is_ascii_alphanumeric() || c == '_'),
+                    's' => c.is_ascii_whitespace(),
+                    'S' => !c.is_ascii_whitespace(),
+                    _ => false,
+                },
+            });
+            if self.negated { !matched } else { matched }
+        } else {
+            let byte_idx = (c as u8 / 8) as usize;
+            let bit_idx = c as u8 % 8;
+            (lookup[byte_idx] & (1 << bit_idx)) != 0
+        }
+    }
 }
 
 /// An item in a character class
@@ -102,24 +192,36 @@ pub enum ClassItem {
 pub enum Quantifier {
     /// Zero or more (*)
     ZeroOrMore,
-    /// Zero or more lazy (*?)
-    ZeroOrMoreLazy,
     /// One or more (+)
     OneOrMore,
-    /// One or more lazy (+?)
-    OneOrMoreLazy,
     /// Zero or one (?)
     Optional,
     /// Exactly n times ({n})
     Exactly(u32),
     /// At least n times ({n,})
     AtLeast(u32),
-    /// At least n times lazy ({n,}?)
-    AtLeastLazy(u32),
     /// Between n and m times ({n,m})
     Between(u32, u32),
-    /// Between n and m times lazy ({n,m}?)
-    BetweenLazy(u32, u32),
+}
+
+impl Quantifier {
+    /// Check if this quantifier is greedy (default) or lazy/non-greedy
+    pub fn is_greedy(&self) -> bool {
+        true // Default implementation - can be extended
+    }
+
+    /// Get the string representation of this quantifier
+    pub fn to_string(&self, lazy: bool) -> String {
+        let suffix = if lazy { "?" } else { "" };
+        match self {
+            Quantifier::ZeroOrMore => format!("*{}", suffix),
+            Quantifier::OneOrMore => format!("+{}", suffix),
+            Quantifier::Optional => format!("?{}", suffix),
+            Quantifier::Exactly(n) => format!("{{{}}}{}", n, suffix),
+            Quantifier::AtLeast(n) => format!("{{{},}}{}", n, suffix),
+            Quantifier::Between(n, m) => format!("{{{},{}}}{}", n, m, suffix),
+        }
+    }
 }
 
 impl Expr {
@@ -162,10 +264,11 @@ impl Expr {
     }
 
     /// Create a quantified expression
-    pub fn quantified(expr: Expr, quantifier: Quantifier) -> Self {
+    pub fn quantified(expr: Expr, quantifier: Quantifier, greedy: bool) -> Self {
         Expr::Quantified {
             expr: Box::new(expr),
             quantifier,
+            greedy,
         }
     }
 
@@ -224,14 +327,18 @@ impl Expr {
                 parts.join("|")
             }
             Expr::CharacterClass(cc) => cc.to_regex_string(),
-            Expr::Quantified { expr, quantifier } => {
+            Expr::Quantified {
+                expr,
+                quantifier,
+                greedy,
+            } => {
                 let needs_parens = matches!(expr.as_ref(), Expr::Alternation(_));
                 let expr_str = if needs_parens {
                     format!("(?:{})", expr.to_regex_string())
                 } else {
                     expr.to_regex_string()
                 };
-                format!("{}{}", expr_str, quantifier.to_regex_string())
+                format!("{}{}", expr_str, quantifier.to_regex_string(*greedy))
             }
             Expr::Group(expr) => format!("({})", expr.to_regex_string()),
             Expr::NonCapturingGroup(expr) => format!("(?:{})", expr.to_regex_string()),
@@ -246,6 +353,165 @@ impl Expr {
             Expr::Shorthand(c) => format!("\\{}", c),
             Expr::WordBoundary => "\\b".to_string(),
             Expr::NonWordBoundary => "\\B".to_string(),
+            Expr::Lookahead(expr) => format!("(@>:{})", expr.to_regex_string()),
+            Expr::NegativeLookahead(expr) => format!("(@>~:{})", expr.to_regex_string()),
+            Expr::Lookbehind(expr) => format!("(@<:{})", expr.to_regex_string()),
+            Expr::NegativeLookbehind(expr) => format!("(@<~:{})", expr.to_regex_string()),
+            Expr::AtomicGroup(expr) => format!("(@*:{})", expr.to_regex_string()),
+            Expr::ConditionalGroup(expr) => format!("(@%:{})", expr.to_regex_string()),
+            Expr::ModeFlagsGroup { flags, pattern } => {
+                format!("(?{}:{})", flags, pattern.to_regex_string())
+            }
+        }
+    }
+
+    /// Convert the AST to Ogex format: (name:pattern)
+    pub fn to_ogex_string(&self) -> String {
+        match self {
+            Expr::Empty => String::new(),
+            Expr::Literal(c) => c.to_string(),
+            Expr::Any => ".".to_string(),
+            Expr::Sequence(exprs) => exprs.iter().map(|e| e.to_ogex_string()).collect(),
+            Expr::Alternation(exprs) => {
+                let parts: Vec<_> = exprs.iter().map(|e| e.to_ogex_string()).collect();
+                parts.join("|")
+            }
+            Expr::CharacterClass(cc) => cc.to_regex_string(),
+            Expr::Quantified {
+                expr,
+                quantifier,
+                greedy,
+            } => {
+                let needs_parens = matches!(expr.as_ref(), Expr::Alternation(_));
+                let expr_str = if needs_parens {
+                    format!("(?:{})", expr.to_ogex_string())
+                } else {
+                    expr.to_ogex_string()
+                };
+                format!("{}{}", expr_str, quantifier.to_regex_string(*greedy))
+            }
+            Expr::Group(expr) => format!("({})", expr.to_ogex_string()),
+            Expr::NonCapturingGroup(expr) => format!("(@?:{})", expr.to_ogex_string()),
+            Expr::NamedGroup { name, pattern } => {
+                format!("({}:{})", name, pattern.to_ogex_string())
+            }
+            Expr::StartAnchor => "^".to_string(),
+            Expr::EndAnchor => "$".to_string(),
+            Expr::Backreference(n) => format!("\\{}", n),
+            Expr::RelativeBackreference(n) => format!("\\g{{{}}}", n),
+            Expr::NamedBackreference(name) => format!("\\g{{{}}}", name),
+            Expr::Shorthand(c) => format!("\\{}", c),
+            Expr::WordBoundary => "\\b".to_string(),
+            Expr::NonWordBoundary => "\\B".to_string(),
+            Expr::Lookahead(expr) => format!("(@>:{})", expr.to_ogex_string()),
+            Expr::NegativeLookahead(expr) => format!("(@>~:{})", expr.to_ogex_string()),
+            Expr::Lookbehind(expr) => format!("(@<:{})", expr.to_ogex_string()),
+            Expr::NegativeLookbehind(expr) => format!("(@<~:{})", expr.to_ogex_string()),
+            Expr::AtomicGroup(expr) => format!("(@*:{})", expr.to_ogex_string()),
+            Expr::ConditionalGroup(expr) => format!("(@%:{})", expr.to_ogex_string()),
+            Expr::ModeFlagsGroup { flags, pattern } => {
+                format!("(@{}:{})", flags, pattern.to_ogex_string())
+            }
+        }
+    }
+
+    /// Convert the AST to Python format: (?P<name>pattern)
+    pub fn to_python_string(&self) -> String {
+        match self {
+            Expr::Empty => String::new(),
+            Expr::Literal(c) => c.to_string(),
+            Expr::Any => ".".to_string(),
+            Expr::Sequence(exprs) => exprs.iter().map(|e| e.to_python_string()).collect(),
+            Expr::Alternation(exprs) => {
+                let parts: Vec<_> = exprs.iter().map(|e| e.to_python_string()).collect();
+                parts.join("|")
+            }
+            Expr::CharacterClass(cc) => cc.to_regex_string(),
+            Expr::Quantified {
+                expr,
+                quantifier,
+                greedy,
+            } => {
+                let needs_parens = matches!(expr.as_ref(), Expr::Alternation(_));
+                let expr_str = if needs_parens {
+                    format!("(?:{})", expr.to_python_string())
+                } else {
+                    expr.to_python_string()
+                };
+                format!("{}{}", expr_str, quantifier.to_regex_string(*greedy))
+            }
+            Expr::Group(expr) => format!("({})", expr.to_python_string()),
+            Expr::NonCapturingGroup(expr) => format!("(?:{})", expr.to_python_string()),
+            Expr::NamedGroup { name, pattern } => {
+                format!("(?P<{}>{})", name, pattern.to_python_string())
+            }
+            Expr::StartAnchor => "^".to_string(),
+            Expr::EndAnchor => "$".to_string(),
+            Expr::Backreference(n) => format!("\\{}", n),
+            Expr::RelativeBackreference(n) => format!("\\g{{{}}}", n),
+            Expr::NamedBackreference(name) => format!("(?P={})", name),
+            Expr::Shorthand(c) => format!("\\{}", c),
+            Expr::WordBoundary => "\\b".to_string(),
+            Expr::NonWordBoundary => "\\B".to_string(),
+            Expr::Lookahead(expr) => format!("(?={})", expr.to_python_string()),
+            Expr::NegativeLookahead(expr) => format!("(?!{})", expr.to_python_string()),
+            Expr::Lookbehind(expr) => format!("(?<={})", expr.to_python_string()),
+            Expr::NegativeLookbehind(expr) => format!("(?<!{})", expr.to_python_string()),
+            Expr::AtomicGroup(expr) => format!("(*atomic:{})", expr.to_python_string()),
+            Expr::ConditionalGroup(expr) => format!("((?({}))", expr.to_python_string()),
+            Expr::ModeFlagsGroup { flags, pattern } => {
+                format!("(?{}:{})", flags, pattern.to_python_string())
+            }
+        }
+    }
+
+    /// Convert the AST to PCRE format: (?<name>pattern)
+    pub fn to_pcre_string(&self) -> String {
+        match self {
+            Expr::Empty => String::new(),
+            Expr::Literal(c) => c.to_string(),
+            Expr::Any => ".".to_string(),
+            Expr::Sequence(exprs) => exprs.iter().map(|e| e.to_pcre_string()).collect(),
+            Expr::Alternation(exprs) => {
+                let parts: Vec<_> = exprs.iter().map(|e| e.to_pcre_string()).collect();
+                parts.join("|")
+            }
+            Expr::CharacterClass(cc) => cc.to_regex_string(),
+            Expr::Quantified {
+                expr,
+                quantifier,
+                greedy,
+            } => {
+                let needs_parens = matches!(expr.as_ref(), Expr::Alternation(_));
+                let expr_str = if needs_parens {
+                    format!("(?:{})", expr.to_pcre_string())
+                } else {
+                    expr.to_pcre_string()
+                };
+                format!("{}{}", expr_str, quantifier.to_regex_string(*greedy))
+            }
+            Expr::Group(expr) => format!("({})", expr.to_pcre_string()),
+            Expr::NonCapturingGroup(expr) => format!("(?:{})", expr.to_pcre_string()),
+            Expr::NamedGroup { name, pattern } => {
+                format!("(?<{}>{})", name, pattern.to_pcre_string())
+            }
+            Expr::StartAnchor => "^".to_string(),
+            Expr::EndAnchor => "$".to_string(),
+            Expr::Backreference(n) => format!("\\{}", n),
+            Expr::RelativeBackreference(n) => format!("\\g{{{}}}", n),
+            Expr::NamedBackreference(name) => format!("\\k<{}>", name),
+            Expr::Shorthand(c) => format!("\\{}", c),
+            Expr::WordBoundary => "\\b".to_string(),
+            Expr::NonWordBoundary => "\\B".to_string(),
+            Expr::Lookahead(expr) => format!("(?={})", expr.to_pcre_string()),
+            Expr::NegativeLookahead(expr) => format!("(?!{})", expr.to_pcre_string()),
+            Expr::Lookbehind(expr) => format!("(?<={})", expr.to_pcre_string()),
+            Expr::NegativeLookbehind(expr) => format!("(?<!{})", expr.to_pcre_string()),
+            Expr::AtomicGroup(expr) => format!("(*atomic:{})", expr.to_pcre_string()),
+            Expr::ConditionalGroup(expr) => format!("((?({}))", expr.to_pcre_string()),
+            Expr::ModeFlagsGroup { flags, pattern } => {
+                format!("(?{}:{})", flags, pattern.to_pcre_string())
+            }
         }
     }
 }
@@ -285,18 +551,20 @@ impl CharacterClass {
 
 impl Quantifier {
     /// Convert quantifier to regex string
-    fn to_regex_string(&self) -> String {
+    #[allow(clippy::wrong_self_convention)]
+    fn to_regex_string(&self, greedy: bool) -> String {
+        let suffix = if greedy {
+            "".to_string()
+        } else {
+            "?".to_string()
+        };
         match self {
-            Quantifier::ZeroOrMore => "*".to_string(),
-            Quantifier::ZeroOrMoreLazy => "*?".to_string(),
-            Quantifier::OneOrMore => "+".to_string(),
-            Quantifier::OneOrMoreLazy => "+?".to_string(),
-            Quantifier::Optional => "?".to_string(),
-            Quantifier::Exactly(n) => format!("{{{}}}", n),
-            Quantifier::AtLeast(n) => format!("{{{},}}", n),
-            Quantifier::AtLeastLazy(n) => format!("{{{},}}?", n),
-            Quantifier::Between(n, m) => format!("{{{},{}}}", n, m),
-            Quantifier::BetweenLazy(n, m) => format!("{{{},{}}}?", n, m),
+            Quantifier::ZeroOrMore => format!("*{}", suffix),
+            Quantifier::OneOrMore => format!("+{}", suffix),
+            Quantifier::Optional => format!("?{}", suffix),
+            Quantifier::Exactly(n) => format!("{{{}}}{}", n, suffix),
+            Quantifier::AtLeast(n) => format!("{{{},}}{}", n, suffix),
+            Quantifier::Between(n, m) => format!("{{{},{}}}{}", n, m, suffix),
         }
     }
 }
@@ -373,19 +641,19 @@ mod tests {
 
     #[test]
     fn test_quantifier_zero_or_more() {
-        let expr = Expr::quantified(Expr::literal('a'), Quantifier::ZeroOrMore);
+        let expr = Expr::quantified(Expr::literal('a'), Quantifier::ZeroOrMore, true);
         assert_eq!(expr.to_regex_string(), "a*");
     }
 
     #[test]
     fn test_quantifier_one_or_more() {
-        let expr = Expr::quantified(Expr::literal('a'), Quantifier::OneOrMore);
+        let expr = Expr::quantified(Expr::literal('a'), Quantifier::OneOrMore, true);
         assert_eq!(expr.to_regex_string(), "a+");
     }
 
     #[test]
     fn test_quantifier_optional() {
-        let expr = Expr::quantified(Expr::literal('a'), Quantifier::Optional);
+        let expr = Expr::quantified(Expr::literal('a'), Quantifier::Optional, true);
         assert_eq!(expr.to_regex_string(), "a?");
     }
 
@@ -438,5 +706,41 @@ mod tests {
     fn test_named_backreference() {
         let expr = Expr::named_backreference("name");
         assert_eq!(expr.to_regex_string(), "\\g{name}");
+    }
+
+    #[test]
+    fn test_lookahead() {
+        let expr = Expr::Lookahead(Box::new(Expr::literal('a')));
+        assert_eq!(expr.to_regex_string(), "(@>:a)");
+    }
+
+    #[test]
+    fn test_negative_lookahead() {
+        let expr = Expr::NegativeLookahead(Box::new(Expr::literal('a')));
+        assert_eq!(expr.to_regex_string(), "(@>~:a)");
+    }
+
+    #[test]
+    fn test_lookbehind() {
+        let expr = Expr::Lookbehind(Box::new(Expr::literal('a')));
+        assert_eq!(expr.to_regex_string(), "(@<:a)");
+    }
+
+    #[test]
+    fn test_negative_lookbehind() {
+        let expr = Expr::NegativeLookbehind(Box::new(Expr::literal('a')));
+        assert_eq!(expr.to_regex_string(), "(@<~:a)");
+    }
+
+    #[test]
+    fn test_atomic_group() {
+        let expr = Expr::AtomicGroup(Box::new(Expr::literal('a')));
+        assert_eq!(expr.to_regex_string(), "(@*:a)");
+    }
+
+    #[test]
+    fn test_conditional_group() {
+        let expr = Expr::ConditionalGroup(Box::new(Expr::literal('a')));
+        assert_eq!(expr.to_regex_string(), "(@%:a)");
     }
 }

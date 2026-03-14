@@ -6,7 +6,8 @@
 use thiserror::Error;
 
 /// The main error type for the regex engine
-#[derive(Error, Debug, Clone, PartialEq)]
+#[derive(Error, Debug)]
+#[cfg_attr(not(feature = "wasm"), derive(Clone, PartialEq))]
 pub enum RegexError {
     /// Errors that occur during lexing/tokenization
     #[error("lexer error at position {position}: {kind}")]
@@ -31,7 +32,8 @@ pub enum RegexError {
 }
 
 /// Specific kinds of lexer errors
-#[derive(Error, Debug, Clone, PartialEq)]
+#[derive(Error, Debug)]
+#[cfg_attr(not(feature = "wasm"), derive(Clone, PartialEq))]
 pub enum LexerErrorKind {
     /// Encountered an unexpected character
     #[error("unexpected character '{0}'")]
@@ -55,7 +57,8 @@ pub enum LexerErrorKind {
 }
 
 /// Errors that occur during parsing
-#[derive(Error, Debug, Clone, PartialEq)]
+#[derive(Error, Debug)]
+#[cfg_attr(not(feature = "wasm"), derive(Clone, PartialEq))]
 pub enum ParseError {
     /// Unexpected token encountered
     #[error("expected {expected}, found {found}")]
@@ -64,11 +67,16 @@ pub enum ParseError {
         expected: String,
         /// What was actually found
         found: String,
+        /// Location in the source (optional)
+        span: Option<Span>,
     },
 
     /// Unexpected end of input
     #[error("unexpected end of input")]
-    UnexpectedEof,
+    UnexpectedEof {
+        /// Location in the source (optional)
+        span: Option<Span>,
+    },
 
     /// Duplicate group name
     #[error("duplicate group name '{0}'")]
@@ -137,6 +145,7 @@ impl SpannedError {
 /// Result type alias for regex operations
 pub type Result<T> = std::result::Result<T, RegexError>;
 
+#[cfg(not(feature = "wasm"))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +167,7 @@ mod tests {
         let err = ParseError::UnexpectedToken {
             expected: "`)`".to_string(),
             found: "EOF".to_string(),
+            span: None,
         };
         assert_eq!(err.to_string(), "expected `)`, found EOF");
     }
@@ -170,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_regex_error_from_parse_error() {
-        let parse_err = ParseError::UnexpectedEof;
+        let parse_err = ParseError::UnexpectedEof { span: None };
         let regex_err: RegexError = parse_err.into();
         assert_eq!(
             regex_err.to_string(),
@@ -196,7 +206,7 @@ mod tests {
 
     #[test]
     fn test_spanned_error() {
-        let error = RegexError::Parse(ParseError::UnexpectedEof);
+        let error = RegexError::Parse(ParseError::UnexpectedEof { span: None });
         let spanned = SpannedError::new(error, Span::single(42));
         assert!(spanned.to_string().contains("unexpected end of input"));
         assert!(spanned.to_string().contains("42"));

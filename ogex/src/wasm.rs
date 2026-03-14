@@ -9,6 +9,76 @@ use wasm_bindgen::prelude::*;
 #[cfg(feature = "wasm")]
 use crate::engine::{Match, Regex};
 
+/// JavaScript-facing structured error
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub struct JsError {
+    /// Error type: "Lexer", "Parser", "Compile", "Runtime"
+    error_type: String,
+    /// Error message
+    message: String,
+    /// Position in pattern where error occurred (for lexer/parser errors)
+    position: Option<usize>,
+    /// Additional context (e.g., invalid character for lexer errors)
+    context: Option<String>,
+}
+
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+impl JsError {
+    /// Create a new JS error from error message (internal helper)
+    fn from_message(error_type: &str, message: String) -> JsError {
+        JsError {
+            error_type: error_type.to_string(),
+            message,
+            position: None,
+            context: None,
+        }
+    }
+
+    /// Get error type
+    #[wasm_bindgen(getter)]
+    pub fn error_type(&self) -> String {
+        self.error_type.clone()
+    }
+
+    /// Get error message
+    #[wasm_bindgen(getter)]
+    pub fn message(&self) -> String {
+        self.message.clone()
+    }
+
+    /// Get error position (if available)
+    #[wasm_bindgen(getter)]
+    pub fn position(&self) -> Option<usize> {
+        self.position
+    }
+
+    /// Get error context (if available)
+    #[wasm_bindgen(getter)]
+    pub fn context(&self) -> Option<String> {
+        self.context.clone()
+    }
+
+    /// Convert to JSON string for easy debugging
+    #[wasm_bindgen(js_name = toJSON)]
+    pub fn to_json(&self) -> String {
+        let pos = self
+            .position
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "null".to_string());
+        let ctx = self
+            .context
+            .clone()
+            .map(|c| format!("\"{}\"", c))
+            .unwrap_or_else(|| "null".to_string());
+        format!(
+            r#"{{"error_type":"{}","message":"{}","position":{},"context":{}}}"#,
+            self.error_type, self.message, pos, ctx
+        )
+    }
+}
+
 /// JavaScript-facing regex wrapper
 #[cfg(feature = "wasm")]
 #[wasm_bindgen]
@@ -21,9 +91,20 @@ pub struct JsRegex {
 impl JsRegex {
     /// Compile a regex pattern
     ///
-    /// Returns an error string if compilation fails
+    /// Returns a JsError if compilation fails
     #[wasm_bindgen(constructor)]
-    pub fn new(pattern: &str) -> Result<JsRegex, JsValue> {
+    pub fn new(pattern: &str) -> Result<JsRegex, JsError> {
+        match Regex::new(pattern) {
+            Ok(regex) => Ok(JsRegex { regex }),
+            Err(e) => Err(JsError::from_message("Compile", e.to_string())),
+        }
+    }
+
+    /// Compile a regex pattern (legacy string-based error)
+    ///
+    /// Returns an error string if compilation fails
+    #[wasm_bindgen(js_name = newWithStringError)]
+    pub fn new_with_string_error(pattern: &str) -> Result<JsRegex, JsValue> {
         match Regex::new(pattern) {
             Ok(regex) => Ok(JsRegex { regex }),
             Err(e) => Err(JsValue::from_str(&e.to_string())),
@@ -64,9 +145,18 @@ impl JsRegex {
         array
     }
 
-    /// Transpile pattern to legacy syntax
+    /// Transpile pattern to legacy syntax (structured error)
     #[wasm_bindgen(js_name = transpile)]
-    pub fn transpile(pattern: &str) -> Result<String, JsValue> {
+    pub fn transpile(pattern: &str) -> Result<String, JsError> {
+        match crate::transpile(pattern) {
+            Ok(result) => Ok(result),
+            Err(e) => Err(JsError::from_message("Compile", e.to_string())),
+        }
+    }
+
+    /// Transpile pattern to legacy syntax (string error - legacy)
+    #[wasm_bindgen(js_name = transpileWithStringError)]
+    pub fn transpile_with_string_error(pattern: &str) -> Result<String, JsValue> {
         match crate::transpile(pattern) {
             Ok(result) => Ok(result),
             Err(e) => Err(JsValue::from_str(&e.to_string())),
@@ -124,14 +214,18 @@ impl JsMatch {
     pub fn groups(&self) -> js_sys::Object {
         let obj = js_sys::Object::new();
 
-        for (idx, (start, end)) in &self.match_result.groups {
-            let text = &self.input[*start..*end];
-            js_sys::Reflect::set(
-                &obj,
-                &JsValue::from_f64(*idx as f64),
-                &JsValue::from_str(text),
-            )
-            .unwrap();
+        for (idx, opt) in self.match_result.groups.iter().enumerate() {
+            if let Some((start, end)) = opt {
+                // idx 0 is unused (groups are 1-indexed), so use idx + 1
+                let group_idx = (idx + 1) as u32;
+                let text = &self.input[*start..*end];
+                js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_f64(group_idx as f64),
+                    &JsValue::from_str(text),
+                )
+                .unwrap();
+            }
         }
 
         obj

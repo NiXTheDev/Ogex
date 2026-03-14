@@ -2,7 +2,7 @@
 //!
 //! These tests validate that the PoC components work together correctly.
 
-use ogex::{compile, parse, transpile_debug, Lexer, Regex, Replacement};
+use ogex::{Lexer, Regex, Replacement, compile, parse, transpile_debug};
 
 #[test]
 fn test_poc_full_pipeline() {
@@ -75,9 +75,11 @@ fn test_named_group_replacement() {
 
     // Groups must be in order by index (group 1 first, group 2 second)
     let mut group_pairs = vec![(0usize, 0usize); m.groups.len()];
-    for (&idx, &(s, e)) in &m.groups {
-        if idx > 0 && (idx as usize) <= group_pairs.len() {
-            group_pairs[(idx - 1) as usize] = (s, e);
+    for (idx, opt) in m.groups.iter().enumerate() {
+        if let Some((s, e)) = opt {
+            if idx > 0 && idx < group_pairs.len() {
+                group_pairs[idx - 1] = (*s, *e);
+            }
         }
     }
     let result = repl.apply("ab", m.start, m.end, &group_pairs);
@@ -270,7 +272,11 @@ fn test_entire_match_replacement_g_with_groups() {
 
     // Replace with entire match wrapped
     let repl = Replacement::parse(r"<\G>").unwrap();
-    let group_pairs: Vec<_> = m.groups.values().map(|(s, e)| (*s, *e)).collect();
+    let group_pairs: Vec<_> = m
+        .groups
+        .iter()
+        .filter_map(|opt| opt.map(|(s, e)| (s, e)))
+        .collect();
     let result = repl.apply("hello world", m.start, m.end, &group_pairs);
     assert_eq!(result, "<hello>");
 }
@@ -285,9 +291,11 @@ fn test_numbered_group_replacement() {
 
     // Groups in order by index
     let mut group_pairs = vec![(0usize, 0usize); m.groups.len()];
-    for (&idx, &(s, e)) in &m.groups {
-        if idx > 0 && idx <= m.groups.len() as u32 {
-            group_pairs[(idx - 1) as usize] = (s, e);
+    for (idx, opt) in m.groups.iter().enumerate() {
+        if let Some((s, e)) = opt {
+            if idx > 0 && idx < m.groups.len() {
+                group_pairs[idx - 1] = (*s, *e);
+            }
         }
     }
     let result = repl.apply("abc", m.start, m.end, &group_pairs);

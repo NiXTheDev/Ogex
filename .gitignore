@@ -1,4 +1,3 @@
 /target
 .sisyphus
 *.lock
-nul # Windows artifact, maybe a bug, also WTF?

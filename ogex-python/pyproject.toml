@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "ogex"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python bindings for Ogex regex engine with unified syntax"
 readme = "README.md"
 license = { text = "MPL-2.0" }
