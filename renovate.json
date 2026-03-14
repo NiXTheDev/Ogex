@@ -3,14 +3,49 @@
   "extends": [
     "config:recommended"
   ],
-  "schedule": ["weekly on Sunday at 06:00 UTC"],
+  "baseBranches": [
+    "+([0-9]).+([0-9]).+([0-9])",
+    "+([0-9]).+([0-9]).+([0-9])-*"
+  ],
+  "schedule": ["before 6am on monday"],
+  "timezone": "UTC",
+  "commitMessagePrefix": "deps:",
+  "prHourlyLimit": 2,
+  "prConcurrentLimit": 5,
   "packageRules": [
     {
-      "matchPackagePatterns": ["*"],
-      "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest"],
-      "groupName": "all dependencies"
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "rust minor and patch dependencies",
+      "groupSlug": "rust-minor-patch",
+      "labels": ["dependencies", "rust"],
+      "rangeStrategy": "update-lockfile",
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "rust major dependencies",
+      "groupSlug": "rust-major",
+      "labels": ["dependencies", "rust", "major"],
+      "rangeStrategy": "bump"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "github actions minor and patch dependencies",
+      "groupSlug": "github-actions-minor-patch",
+      "labels": ["dependencies", "GHA"],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "github actions major dependencies",
+      "groupSlug": "github-actions-major",
+      "labels": ["dependencies", "GHA", "major"]
     }
-  ],
-  "branchRegex": "^(\\d+\\.)?(\\d+\\.)?(\\d+)(-[a-zA-Z0-9]+)?$",
-  "branchPrefix": ""
+  ]
 }
