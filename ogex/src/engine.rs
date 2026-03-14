@@ -159,11 +159,14 @@ impl SimState {
 }
 
 /// NFA simulator for pattern matching
+#[allow(clippy::type_complexity)]
 struct NfaSimulator<'a> {
     nfa: &'a Nfa,
     _input: &'a str,
     input_chars: Vec<char>,
     start_pos: usize,
+    /// Memoization cache: (state_id, position) -> Option<groups> (Some if can reach accept, None if cannot)
+    memo: HashMap<(StateId, usize), Option<HashMap<u32, (usize, usize)>>>,
 }
 
 impl<'a> NfaSimulator<'a> {
@@ -173,7 +176,27 @@ impl<'a> NfaSimulator<'a> {
             _input: input,
             input_chars: input.chars().collect(),
             start_pos,
+            memo: HashMap::new(),
         }
+    }
+
+    /// Check if the result for a given state and position is memoized
+    fn check_memoized(
+        &self,
+        state_id: StateId,
+        pos: usize,
+    ) -> Option<Option<HashMap<u32, (usize, usize)>>> {
+        self.memo.get(&(state_id, pos)).cloned()
+    }
+
+    /// Store the result in the memoization cache
+    fn store_memoized(
+        &mut self,
+        state_id: StateId,
+        pos: usize,
+        result: Option<HashMap<u32, (usize, usize)>>,
+    ) {
+        self.memo.insert((state_id, pos), result);
     }
 
     #[allow(clippy::type_complexity)]
@@ -188,9 +211,8 @@ impl<'a> NfaSimulator<'a> {
         current_states = self.epsilon_closure(&current_states, pos);
 
         // Check if start state is accepting (empty match)
-        if let Some(groups) = self.find_accepting(&current_states) {
-            last_accept = Some((pos, groups));
-        }
+        // Use memoization for each state in the closure
+        current_states = self.memoize_closure(&current_states, pos, &mut last_accept);
 
         while pos < self.input_chars.len() {
             let c = self.input_chars[pos];
@@ -203,16 +225,15 @@ impl<'a> NfaSimulator<'a> {
 
             pos += chars_consumed;
 
-            if let Some(groups) = self.find_accepting(&current_states) {
-                last_accept = Some((pos, groups));
-            }
+            // Apply epsilon closure and use memoization
+            current_states = self.epsilon_closure(&current_states, pos);
+            current_states = self.memoize_closure(&current_states, pos, &mut last_accept);
         }
 
         // Try to reach accept state via epsilon transitions (for end anchors)
         current_states = self.epsilon_closure(&current_states, pos);
-        if let Some(groups) = self.find_accepting(&current_states) {
-            last_accept = Some((pos, groups));
-        }
+        // Use memoization for final epsilon closure (result not needed after)
+        self.memoize_closure(&current_states, pos, &mut last_accept);
 
         last_accept.map(|(end, groups)| Match {
             start: self.start_pos,
@@ -220,6 +241,46 @@ impl<'a> NfaSimulator<'a> {
             groups,
             named_groups: HashMap::new(),
         })
+    }
+
+    /// Apply memoization to a closure of states at a position.
+    /// Returns filtered states and updates last_accept if any state leads to accept.
+    #[allow(clippy::type_complexity)]
+    fn memoize_closure(
+        &mut self,
+        states: &[SimState],
+        pos: usize,
+        last_accept: &mut Option<(usize, HashMap<u32, (usize, usize)>)>,
+    ) -> Vec<SimState> {
+        let mut result = Vec::new();
+
+        for sim_state in states {
+            // Check memo cache for this state at this position
+            match self.check_memoized(sim_state.state_id, pos) {
+                // Already computed: if it leads to accept, update last_accept
+                Some(Some(groups)) => {
+                    *last_accept = Some((pos, groups));
+                    // Still add the state for continued exploration
+                    result.push(sim_state.clone());
+                }
+                // Already computed: this state cannot lead to accept, skip it
+                Some(None) => {
+                    // Skip this state - we've already proven it can't lead to accept
+                }
+                // Not memoized: need to check if accepting and memoize the result
+                None => {
+                    let can_accept = self.find_accepting(std::slice::from_ref(sim_state));
+                    if let Some(groups) = can_accept.clone() {
+                        *last_accept = Some((pos, groups));
+                    }
+                    // Store result in memo (None if cannot reach accept, Some(groups) if can)
+                    self.store_memoized(sim_state.state_id, pos, can_accept);
+                    result.push(sim_state.clone());
+                }
+            }
+        }
+
+        result
     }
 
     fn step_with_backrefs(
