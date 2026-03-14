@@ -12,7 +12,7 @@ use crate::engine::ModeFlags;
 pub type StateId = usize;
 
 /// A transition in the NFA
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Transition {
     /// Transition on a specific character
     Char(char),
@@ -44,6 +44,12 @@ pub enum Transition {
     WordBoundary,
     /// Non-word boundary assertion
     NonWordBoundary,
+    /// Positive lookahead assertion (@>:pattern)
+    /// Contains the compiled NFA for the inner pattern
+    Lookahead(Nfa),
+    /// Negative lookahead assertion (@>~:pattern)
+    /// Contains the compiled NFA for the inner pattern
+    NegativeLookahead(Nfa),
 }
 
 /// An NFA state
@@ -65,7 +71,7 @@ impl State {
 }
 
 /// An NFA (Nondeterministic Finite Automaton)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Nfa {
     /// All states in the NFA
     pub states: Vec<State>,
@@ -212,10 +218,33 @@ impl Nfa {
             Expr::Shorthand(c) => self.compile_shorthand(*c),
             Expr::WordBoundary => self.compile_word_boundary(false),
             Expr::NonWordBoundary => self.compile_word_boundary(true),
+            Expr::Lookahead(expr) => self.compile_lookahead(expr, true),
+            Expr::NegativeLookahead(expr) => self.compile_lookahead(expr, false),
 
-            // Handle new assertion and group types
-            _ => self.compile_empty(),
+            // Lookbehind is TODO
+            Expr::Lookbehind(_) | Expr::NegativeLookbehind(_) => self.compile_empty(),
         }
+    }
+
+    /// Compile a lookahead assertion
+    ///
+    /// # Arguments
+    /// * `expr` - The inner pattern to match
+    /// * `positive` - If true, positive lookahead (@>:), if false, negative lookahead (@>~:)
+    fn compile_lookahead(&mut self, expr: &Expr, positive: bool) -> (StateId, StateId) {
+        // Compile the inner pattern into a separate NFA
+        let inner_nfa = Nfa::from_expr(expr);
+
+        let start = self.new_state();
+        let accept = self.new_state();
+
+        if positive {
+            self.add_transition(start, Transition::Lookahead(inner_nfa), accept);
+        } else {
+            self.add_transition(start, Transition::NegativeLookahead(inner_nfa), accept);
+        }
+
+        (start, accept)
     }
 
     /// Compile an empty expression

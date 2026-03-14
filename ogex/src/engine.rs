@@ -146,6 +146,13 @@ impl Regex {
         let mut simulator = NfaSimulator::new(&self.nfa, input, start);
         simulator.run()
     }
+
+    /// Try to match the pattern at a specific position without trying other positions
+    /// Used for lookahead assertions - checks if pattern matches at current position
+    pub fn try_match_at(&self, input: &str, pos: usize) -> bool {
+        let mut simulator = NfaSimulator::new(&self.nfa, input, pos);
+        simulator.run().is_some()
+    }
 }
 
 /// A state in the NFA simulation that includes capture group information
@@ -564,6 +571,19 @@ impl<'a> NfaSimulator<'a> {
                         }
                         stack.push(SimState::with_groups(*target, new_groups));
                     }
+                    Transition::Lookahead(inner_nfa) => {
+                        // Check if the inner pattern matches at the current position
+                        // without consuming input (lookahead is zero-width)
+                        if self.check_lookahead(inner_nfa, pos) {
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        }
+                    }
+                    Transition::NegativeLookahead(inner_nfa) => {
+                        // Check if the inner pattern does NOT match at the current position
+                        if !self.check_lookahead(inner_nfa, pos) {
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        }
+                    }
                     _ => {} // Char/CharClass handled in step
                 }
             }
@@ -603,6 +623,17 @@ impl<'a> NfaSimulator<'a> {
 
     fn is_word_char(&self, c: char) -> bool {
         c.is_ascii_alphanumeric() || c == '_'
+    }
+
+    /// Check if an inner NFA matches at a specific position without consuming input
+    /// Used for lookahead assertions
+    fn check_lookahead(&self, inner_nfa: &Nfa, pos: usize) -> bool {
+        // Create a regex from the inner NFA and try to match at the position
+        let regex = Regex {
+            nfa: inner_nfa.clone(),
+        };
+        // Use try_match_at to check if pattern matches without consuming beyond
+        regex.try_match_at(self._input, pos)
     }
 }
 
