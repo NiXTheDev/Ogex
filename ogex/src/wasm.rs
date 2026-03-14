@@ -26,30 +26,30 @@ pub struct JsError {
 #[cfg(feature = "wasm")]
 #[wasm_bindgen]
 impl JsError {
-    /// Create a new JS error from a RegexError
-    pub fn from_error(e: &crate::RegexError) -> JsError {
+    /// Create a new JS error from a RegexError (internal helper)
+    fn from_error_internal(e: crate::RegexError) -> JsError {
         match e {
             crate::RegexError::Lexer { position, kind } => JsError {
                 error_type: "Lexer".to_string(),
                 message: kind.to_string(),
-                position: Some(*position),
+                position: Some(position),
                 context: Some(format!("{:?}", kind)),
             },
             crate::RegexError::Parse(parse_err) => JsError {
                 error_type: "Parser".to_string(),
                 message: parse_err.to_string(),
-                position: None, // TODO: Add span support to parse errors for WASM
+                position: None,
                 context: None,
             },
             crate::RegexError::Compile(msg) => JsError {
                 error_type: "Compile".to_string(),
-                message: msg.clone(),
+                message: msg,
                 position: None,
                 context: None,
             },
             crate::RegexError::Runtime(msg) => JsError {
                 error_type: "Runtime".to_string(),
-                message: msg.clone(),
+                message: msg,
                 position: None,
                 context: None,
             },
@@ -116,7 +116,7 @@ impl JsRegex {
     pub fn new(pattern: &str) -> Result<JsRegex, JsError> {
         match Regex::new(pattern) {
             Ok(regex) => Ok(JsRegex { regex }),
-            Err(e) => Err(JsError::from_error(&e)),
+            Err(e) => Err(JsError::from_error_internal(e)),
         }
     }
 
@@ -170,7 +170,7 @@ impl JsRegex {
     pub fn transpile(pattern: &str) -> Result<String, JsError> {
         match crate::transpile(pattern) {
             Ok(result) => Ok(result),
-            Err(e) => Err(JsError::from_error(&e)),
+            Err(e) => Err(JsError::from_error_internal(e)),
         }
     }
 
@@ -234,14 +234,18 @@ impl JsMatch {
     pub fn groups(&self) -> js_sys::Object {
         let obj = js_sys::Object::new();
 
-        for (idx, (start, end)) in &self.match_result.groups {
-            let text = &self.input[*start..*end];
-            js_sys::Reflect::set(
-                &obj,
-                &JsValue::from_f64(*idx as f64),
-                &JsValue::from_str(text),
-            )
-            .unwrap();
+        for (idx, opt) in self.match_result.groups.iter().enumerate() {
+            if let Some((start, end)) = opt {
+                // idx 0 is unused (groups are 1-indexed), so use idx + 1
+                let group_idx = (idx + 1) as u32;
+                let text = &self.input[*start..*end];
+                js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_f64(group_idx as f64),
+                    &JsValue::from_str(text),
+                )
+                .unwrap();
+            }
         }
 
         obj
