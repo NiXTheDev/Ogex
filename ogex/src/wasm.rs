@@ -9,6 +9,96 @@ use wasm_bindgen::prelude::*;
 #[cfg(feature = "wasm")]
 use crate::engine::{Match, Regex};
 
+/// JavaScript-facing structured error
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub struct JsError {
+    /// Error type: "Lexer", "Parser", "Compile", "Runtime"
+    error_type: String,
+    /// Error message
+    message: String,
+    /// Position in pattern where error occurred (for lexer/parser errors)
+    position: Option<usize>,
+    /// Additional context (e.g., invalid character for lexer errors)
+    context: Option<String>,
+}
+
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+impl JsError {
+    /// Create a new JS error from a RegexError
+    pub fn from_error(e: &crate::RegexError) -> JsError {
+        match e {
+            crate::RegexError::Lexer { position, kind } => JsError {
+                error_type: "Lexer".to_string(),
+                message: kind.to_string(),
+                position: Some(*position),
+                context: Some(format!("{:?}", kind)),
+            },
+            crate::RegexError::Parse(parse_err) => JsError {
+                error_type: "Parser".to_string(),
+                message: parse_err.to_string(),
+                position: None, // TODO: Add span support to parse errors for WASM
+                context: None,
+            },
+            crate::RegexError::Compile(msg) => JsError {
+                error_type: "Compile".to_string(),
+                message: msg.clone(),
+                position: None,
+                context: None,
+            },
+            crate::RegexError::Runtime(msg) => JsError {
+                error_type: "Runtime".to_string(),
+                message: msg.clone(),
+                position: None,
+                context: None,
+            },
+        }
+    }
+
+    /// Get error type
+    #[wasm_bindgen(getter)]
+    pub fn error_type(&self) -> String {
+        self.error_type.clone()
+    }
+
+    /// Get error message
+    #[wasm_bindgen(getter)]
+    pub fn message(&self) -> String {
+        self.message.clone()
+    }
+
+    /// Get error position (if available)
+    #[wasm_bindgen(getter)]
+    pub fn position(&self) -> Option<usize> {
+        self.position
+    }
+
+    /// Get error context (if available)
+    #[wasm_bindgen(getter)]
+    pub fn context(&self) -> Option<String> {
+        self.context.clone()
+    }
+
+    /// Convert to JSON string for easy debugging
+    #[wasm_bindgen(js_name = toJSON)]
+    pub fn to_json(&self) -> String {
+        let pos = self
+            .position
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "null".to_string());
+        let ctx = self
+            .context
+            .clone()
+            .map(|c| format!("\"{}\"", c))
+            .unwrap_or_else(|| "null".to_string());
+        format!(
+            r#"{{"error_type":"{}","message":"{}","position":{},"context":{}}}"#,
+            self.error_type, self.message, pos, ctx
+        )
+    }
+}
+
 /// JavaScript-facing regex wrapper
 #[cfg(feature = "wasm")]
 #[wasm_bindgen]
@@ -21,9 +111,20 @@ pub struct JsRegex {
 impl JsRegex {
     /// Compile a regex pattern
     ///
-    /// Returns an error string if compilation fails
+    /// Returns a JsError if compilation fails
     #[wasm_bindgen(constructor)]
-    pub fn new(pattern: &str) -> Result<JsRegex, JsValue> {
+    pub fn new(pattern: &str) -> Result<JsRegex, JsError> {
+        match Regex::new(pattern) {
+            Ok(regex) => Ok(JsRegex { regex }),
+            Err(e) => Err(JsError::from_error(&e)),
+        }
+    }
+
+    /// Compile a regex pattern (legacy string-based error)
+    ///
+    /// Returns an error string if compilation fails
+    #[wasm_bindgen(js_name = newWithStringError)]
+    pub fn new_with_string_error(pattern: &str) -> Result<JsRegex, JsValue> {
         match Regex::new(pattern) {
             Ok(regex) => Ok(JsRegex { regex }),
             Err(e) => Err(JsValue::from_str(&e.to_string())),
@@ -64,9 +165,18 @@ impl JsRegex {
         array
     }
 
-    /// Transpile pattern to legacy syntax
+    /// Transpile pattern to legacy syntax (structured error)
     #[wasm_bindgen(js_name = transpile)]
-    pub fn transpile(pattern: &str) -> Result<String, JsValue> {
+    pub fn transpile(pattern: &str) -> Result<String, JsError> {
+        match crate::transpile(pattern) {
+            Ok(result) => Ok(result),
+            Err(e) => Err(JsError::from_error(&e)),
+        }
+    }
+
+    /// Transpile pattern to legacy syntax (string error - legacy)
+    #[wasm_bindgen(js_name = transpileWithStringError)]
+    pub fn transpile_with_string_error(pattern: &str) -> Result<String, JsValue> {
         match crate::transpile(pattern) {
             Ok(result) => Ok(result),
             Err(e) => Err(JsValue::from_str(&e.to_string())),

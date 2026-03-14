@@ -3,7 +3,6 @@
 //! This module provides the actual regex matching functionality,
 //! including NFA simulation and backreference handling.
 
-use crate::ast::ClassItem;
 use crate::nfa::{Nfa, StateId, Transition};
 use std::collections::HashMap;
 
@@ -301,21 +300,16 @@ impl<'a> NfaSimulator<'a> {
                     *tc == c
                 }
             }
-            Transition::CharClass { negated, items } => {
-                let matched = items.iter().any(|item| match item {
-                    ClassItem::Char(ch) => *ch == c,
-                    ClassItem::Range(start, end) => (*start..=*end).contains(&c),
-                    ClassItem::Shorthand(sh) => match sh {
-                        'd' => c.is_ascii_digit(),
-                        'D' => !c.is_ascii_digit(),
-                        'w' => c.is_ascii_alphanumeric() || c == '_',
-                        'W' => !(c.is_ascii_alphanumeric() || c == '_'),
-                        's' => c.is_ascii_whitespace(),
-                        'S' => !c.is_ascii_whitespace(),
-                        _ => false,
-                    },
-                });
-                if *negated { !matched } else { matched }
+            Transition::CharClass { negated: _negated, lookup } => {
+                // O(1) lookup using pre-computed table (negation already handled in lookup)
+                if c as u32 > 255 {
+                    // For non-ASCII, fall back to simple check
+                    false
+                } else {
+                    let byte_idx = (c as u8 / 8) as usize;
+                    let bit_idx = c as u8 % 8;
+                    (lookup[byte_idx] & (1 << bit_idx)) != 0
+                }
             }
             Transition::Any => {
                 // In dotall mode, . matches any character including newline
@@ -349,15 +343,26 @@ impl<'a> NfaSimulator<'a> {
 
             closure.push(sim_state.clone());
 
+            // Use pre-computed epsilon closure for pure epsilon transitions
+            let epsilon_targets = self.nfa.get_epsilon_closure(sim_state.state_id);
+            for &target in epsilon_targets {
+                if !closure.iter().any(|s| s.state_id == target) {
+                    stack.push(SimState::with_groups(target, sim_state.groups.clone()));
+                }
+            }
+
+            // Handle position-dependent transitions (anchors, word boundaries, groups)
             for (transition, target) in &self.nfa.states[sim_state.state_id].transitions {
+                // Skip pure epsilon - already handled by pre-computed closure
+                if matches!(transition, Transition::Epsilon) {
+                    continue;
+                }
+                
                 if closure.iter().any(|s| s.state_id == *target) {
                     continue;
                 }
 
                 match transition {
-                    Transition::Epsilon => {
-                        stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
-                    }
                     Transition::StartAnchor => {
                         if self.nfa.mode_flags.multiline {
                             // In multiline mode, ^ matches at start of string or after newline

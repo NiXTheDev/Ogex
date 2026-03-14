@@ -3,7 +3,26 @@
 //! This module provides a tokenizer that converts regex pattern strings
 //! into a stream of tokens for parsing.
 
+// Re-export Span from error module to avoid duplication
+pub use crate::error::Span;
+
 use std::fmt;
+
+/// A token with its span in the input
+#[derive(Debug, Clone, PartialEq)]
+pub struct Spanned<T> {
+    /// The token value
+    pub token: T,
+    /// The span of the token in the input
+    pub span: Span,
+}
+
+impl<T> Spanned<T> {
+    /// Create a new spanned token
+    pub fn new(token: T, span: Span) -> Self {
+        Spanned { token, span }
+    }
+}
 
 /// A token in a regex pattern
 #[derive(Debug, Clone, PartialEq)]
@@ -322,7 +341,43 @@ impl<'a> Lexer<'a> {
                 }
 
                 if self.current_char == Some('?') {
-                    self.advance(); // consume '@'
+                    self.advance(); // consume '?'
+
+                    // Check for legacy named groups: (?P<name>...) or (?<name>...)
+                    if self.current_char == Some('P') {
+                        // (?P<name>...) - Python style named group
+                        self.advance(); // consume 'P'
+                        if self.current_char == Some('<') {
+                            self.advance(); // consume '<'
+                            let name = self.read_identifier();
+                            if self.current_char == Some('>') {
+                                self.advance(); // consume '>'
+                                // Python style: (?P<name>pattern) - no colon needed
+                                // After consuming '>', we're at the start of pattern
+                                return Token::NamedGroupStart(name);
+                            }
+                        }
+                        // Invalid (?P...) syntax, reset
+                        self.position = start_pos;
+                        self.current_char = Some('(');
+                        self.advance();
+                        return Token::LeftParen;
+                    } else if self.current_char == Some('<') {
+                        // (?<name>...) - PCRE style named group
+                        self.advance(); // consume '<'
+                        let name = self.read_identifier();
+                        if self.current_char == Some('>') {
+                            self.advance(); // consume '>'
+                            // PCRE style: (?<name>pattern) - no colon needed
+                            // After consuming '>', we're at the start of pattern
+                            return Token::NamedGroupStart(name);
+                        }
+                        // Invalid (?<...) syntax, reset
+                        self.position = start_pos;
+                        self.current_char = Some('(');
+                        self.advance();
+                        return Token::LeftParen;
+                    }
 
                     // Parse mode flags (i, m, s, x in any combination)
                     let mut mode_flags = String::new();
@@ -355,7 +410,14 @@ impl<'a> Lexer<'a> {
                     if self.current_char == Some('@') {
                         // Will be consumed in modifier matching
                     } else {
-                        self.advance(); // consume '?'
+                        // Check if next char is P or < before consuming ?
+                        let next_is_special = matches!(
+                            self.input.chars().nth(self.position + 1),
+                            Some('P') | Some('<')
+                        );
+                        if !next_is_special {
+                            self.advance(); // consume '?'
+                        }
                     }
                     // Check for @ modifier (e.g., (@>:pattern))
                     if self.current_char == Some('@') {
@@ -390,12 +452,50 @@ impl<'a> Lexer<'a> {
                                 '%'
                             }
                             Some('?') => {
-                                // (@?:pattern) is non-capturing group
+                                // (@?:pattern) is non-capturing group, but could also be (?P<...> or (?<...
                                 self.advance(); // consume '?'
-                                // Consume the colon separator
+                                // Check what follows the ?
                                 if self.current_char == Some(':') {
+                                    // (@?:pattern) - non-capturing group
                                     self.advance(); // consume ':'
+                                    return Token::NonCapturing;
+                                } else if self.current_char == Some('P') {
+                                    // (?P<name>:...) - Python style named group
+                                    self.advance(); // consume P
+                                    if self.current_char == Some('<') {
+                                        self.advance(); // consume <
+                                        let name = self.read_identifier();
+                                        if self.current_char == Some('>') {
+                                            self.advance(); // consume >
+                                            if self.current_char == Some(':') {
+                                                self.advance(); // consume :
+                                                return Token::NamedGroupStart(name);
+                                            }
+                                        }
+                                    }
+                                    // Invalid, reset
+                                    self.position = start_pos;
+                                    self.current_char = Some('(');
+                                    self.advance();
+                                    return Token::LeftParen;
+                                } else if self.current_char == Some('<') {
+                                    // (?<name>:...) - PCRE style named group
+                                    self.advance(); // consume <
+                                    let name = self.read_identifier();
+                                    if self.current_char == Some('>') {
+                                        self.advance(); // consume >
+                                        if self.current_char == Some(':') {
+                                            self.advance(); // consume :
+                                            return Token::NamedGroupStart(name);
+                                        }
+                                    }
+                                    // Invalid, reset
+                                    self.position = start_pos;
+                                    self.current_char = Some('(');
+                                    self.advance();
+                                    return Token::LeftParen;
                                 }
+                                // Just ? without valid syntax - return non-capturing as fallback
                                 return Token::NonCapturing;
                             }
                             Some(':') => {
@@ -431,6 +531,7 @@ impl<'a> Lexer<'a> {
                             };
                         }
                     }
+
                     if self.current_char == Some(':') {
                         self.advance(); // consume ':'
                         return Token::NonCapturing;
@@ -559,6 +660,30 @@ impl<'a> Lexer<'a> {
             tokens.push(token);
         }
         tokens
+    }
+
+    /// Tokenize and return tokens with their spans
+    pub fn tokenize_spanned(&mut self) -> Vec<Spanned<Token>> {
+        let mut tokens = Vec::new();
+        loop {
+            let start = self.position.saturating_sub(1);
+            let token = self.next_token();
+            let end = self.position;
+            if token == Token::Eof {
+                tokens.push(Spanned::new(token, Span::new(start, end)));
+                break;
+            }
+            tokens.push(Spanned::new(token, Span::new(start, end)));
+        }
+        tokens
+    }
+
+    /// Get the next token with its span
+    pub fn next_spanned(&mut self) -> Spanned<Token> {
+        let start = self.position.saturating_sub(1);
+        let token = self.next_token();
+        let end = self.position;
+        Spanned::new(token, Span::new(start, end))
     }
 }
 
@@ -865,5 +990,29 @@ mod tests {
             tokens,
             vec![Token::BackrefName("1".to_string()), Token::Eof,]
         );
+    }
+
+    #[test]
+    fn test_tokenize_spanned() {
+        let mut lexer = Lexer::new("abc");
+        let tokens = lexer.tokenize_spanned();
+
+        // Should have 4 tokens: 'a', 'b', 'c', EOF
+        assert!(tokens.len() >= 3);
+
+        // Check first token is 'a' literal
+        assert_eq!(tokens[0].token, Token::Literal('a'));
+
+        // Check last token is EOF
+        assert_eq!(tokens[tokens.len() - 1].token, Token::Eof);
+    }
+
+    #[test]
+    fn test_tokenize_spanned_named_group() {
+        let mut lexer = Lexer::new("(name:abc)");
+        let tokens = lexer.tokenize_spanned();
+
+        // First token should be NamedGroupStart
+        assert_eq!(tokens[0].token, Token::NamedGroupStart("name".to_string()));
     }
 }

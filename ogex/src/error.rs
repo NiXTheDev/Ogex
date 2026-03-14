@@ -64,11 +64,16 @@ pub enum ParseError {
         expected: String,
         /// What was actually found
         found: String,
+        /// Location in the source (optional)
+        span: Option<Span>,
     },
 
     /// Unexpected end of input
     #[error("unexpected end of input")]
-    UnexpectedEof,
+    UnexpectedEof {
+        /// Location in the source (optional)
+        span: Option<Span>,
+    },
 
     /// Duplicate group name
     #[error("duplicate group name '{0}'")]
@@ -158,6 +163,7 @@ mod tests {
         let err = ParseError::UnexpectedToken {
             expected: "`)`".to_string(),
             found: "EOF".to_string(),
+            span: None,
         };
         assert_eq!(err.to_string(), "expected `)`, found EOF");
     }
@@ -170,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_regex_error_from_parse_error() {
-        let parse_err = ParseError::UnexpectedEof;
+        let parse_err = ParseError::UnexpectedEof { span: None };
         let regex_err: RegexError = parse_err.into();
         assert_eq!(
             regex_err.to_string(),
@@ -196,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_spanned_error() {
-        let error = RegexError::Parse(ParseError::UnexpectedEof);
+        let error = RegexError::Parse(ParseError::UnexpectedEof { span: None });
         let spanned = SpannedError::new(error, Span::single(42));
         assert!(spanned.to_string().contains("unexpected end of input"));
         assert!(spanned.to_string().contains("42"));

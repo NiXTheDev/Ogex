@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use ogex::{
-    Regex, convert_all, transpile, transpile_debug, transpile_to_ogex, transpile_to_python,
+    Regex, convert_all, explain, transpile, transpile_debug, transpile_to_ogex, transpile_to_python,
 };
 
 #[derive(Parser)]
@@ -56,6 +56,11 @@ enum Commands {
         /// The input string
         input: String,
     },
+    /// Explain a regex pattern in human-readable format
+    Explain {
+        /// The regex pattern to explain
+        pattern: String,
+    },
 }
 
 fn main() {
@@ -76,6 +81,7 @@ fn main() {
         } => cmd_convert(pattern.as_deref(), ogex, python, pcre, debug),
         Commands::Find { pattern, input } => cmd_find(&pattern, &input),
         Commands::Match { pattern, input } => cmd_match(&pattern, &input),
+        Commands::Explain { pattern } => cmd_explain(&pattern),
     }
 }
 
@@ -270,5 +276,17 @@ fn cmd_match(pattern: &str, input: &str) {
     } else {
         println!("{}", "false".red());
         std::process::exit(1);
+    }
+}
+
+fn cmd_explain(pattern: &str) {
+    match explain(pattern) {
+        Ok(result) => {
+            result.explain();
+        }
+        Err(e) => {
+            eprintln!("{} {}", "Error:".red().bold(), e);
+            std::process::exit(1);
+        }
     }
 }

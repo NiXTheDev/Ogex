@@ -20,13 +20,13 @@ pub use ast::Expr;
 pub use engine::{Match, Regex};
 pub use error::{LexerErrorKind, ParseError, RegexError, Result, Span, SpannedError};
 pub use groups::{GroupCollector, GroupInfo, GroupRegistry, GroupRegistryError};
-pub use lexer::{Lexer, Token};
+pub use lexer::{Lexer, Spanned, Token};
 pub use nfa::{Nfa, State, StateId, Transition};
 pub use parser::{Parser, parse};
 pub use replace::{Replacement, ReplacementError, ReplacementPart};
 pub use transpiler::{
-    ConvertResult, TranspileResult, convert_all, transpile, transpile_debug, transpile_to_ogex,
-    transpile_to_python,
+    ConvertResult, ExplainResult, TranspileResult, convert_all, explain, transpile,
+    transpile_debug, transpile_to_ogex, transpile_to_python,
 };
 
 /// Compile a regex pattern with custom syntax

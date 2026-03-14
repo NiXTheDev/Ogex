@@ -22,11 +22,11 @@ pub struct MatchHandle {
 
 /// Helper to set error message
 fn set_error(error: *mut *mut c_char, msg: &str) {
-    if !error.is_null() {
-        if let Ok(err) = CString::new(msg) {
-            unsafe {
-                *error = err.into_raw();
-            }
+    if !error.is_null()
+        && let Ok(err) = CString::new(msg)
+    {
+        unsafe {
+            *error = err.into_raw();
         }
     }
 }
@@ -117,17 +117,10 @@ pub unsafe extern "C" fn ogex_is_match(handle: *const RegexHandle, input: *const
         };
 
         let regex = &unsafe { &(*handle).regex };
-        if regex.is_match(input_str) {
-            1
-        } else {
-            0
-        }
+        if regex.is_match(input_str) { 1 } else { 0 }
     });
 
-    match result {
-        Ok(val) => val,
-        Err(_) => 0,
-    }
+    result.unwrap_or_default()
 }
 
 /// Find the first match
