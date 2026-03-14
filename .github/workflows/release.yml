@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - 'v*'
   pull_request:
     branches:
       - release
@@ -11,7 +14,7 @@ jobs:
   release:
     name: Release ${{ matrix.crate }}
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'Release')
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'pull_request' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'Release'))
     strategy:
       matrix:
         include:
@@ -20,7 +23,7 @@ jobs:
           - crate: ogex-cli
             publish: true
           - crate: ogex-python
-            publish: false
+            publish: true
 
     steps:
       - name: Checkout code
