@@ -554,6 +554,12 @@ impl Nfa {
         self.numbered_groups.len()
     }
 
+    /// Get the next group ID to be allocated
+    /// This is also the size needed for group storage vectors (since groups are 1-indexed)
+    pub fn next_group_id(&self) -> u32 {
+        self.next_group_id
+    }
+
     /// Resolve a relative backreference (\g{-n}) to an absolute group index
     ///
     /// # Arguments

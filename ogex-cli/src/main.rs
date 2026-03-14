@@ -110,14 +110,16 @@ fn cmd_test(pattern: &str, input: &str, verbose: bool) {
             println!("{}", "Capture groups:".bold());
 
             // Show numbered groups
-            for (idx, (start, end)) in &m.groups {
-                println!(
-                    "  Group {}: {}..{} = {}",
-                    idx,
-                    start,
-                    end,
-                    &input[*start..*end].green()
-                );
+            for (idx, group) in m.groups.iter().enumerate() {
+                if let Some((start, end)) = group {
+                    println!(
+                        "  Group {}: {}..{} = {}",
+                        idx,
+                        start,
+                        end,
+                        &input[*start..*end].green()
+                    );
+                }
             }
 
             // Show named groups

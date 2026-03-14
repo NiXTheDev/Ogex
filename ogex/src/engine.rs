@@ -6,6 +6,10 @@
 use crate::nfa::{Nfa, StateId, Transition};
 use std::collections::HashMap;
 
+/// Dense vector storage for capture groups (index-based for better cache locality)
+/// Index 0 is unused (groups are 1-indexed), so groups[n] gives group n's capture
+type GroupStorage = Vec<Option<(usize, usize)>>;
+
 /// Mode flags for regex matching
 #[derive(Debug, Clone, Default)]
 pub struct ModeFlags {
@@ -51,8 +55,9 @@ pub struct Match {
     pub start: usize,
     /// The end position of the match (exclusive)
     pub end: usize,
-    /// Captured groups (index -> (start, end))
-    pub groups: HashMap<u32, (usize, usize)>,
+    /// Captured groups (index-based: groups[n] = Some((start, end)) for group n)
+    /// Index 0 is unused (groups are 1-indexed)
+    pub groups: GroupStorage,
     /// Named captured groups (name -> (start, end))
     pub named_groups: HashMap<String, (usize, usize)>,
 }
@@ -65,7 +70,12 @@ impl Match {
 
     /// Get a capture group by index (1-based)
     pub fn group(&self, n: u32) -> Option<(usize, usize)> {
-        self.groups.get(&n).copied()
+        let idx = n as usize;
+        if idx >= self.groups.len() {
+            None
+        } else {
+            self.groups[idx]
+        }
     }
 
     /// Get a named capture group
@@ -142,18 +152,21 @@ impl Regex {
 #[derive(Debug, Clone)]
 struct SimState {
     state_id: StateId,
-    groups: HashMap<u32, (usize, usize)>,
+    /// Capture groups (index-based, index 0 unused)
+    groups: GroupStorage,
 }
 
 impl SimState {
-    fn new(state_id: StateId) -> Self {
+    /// Create a new state with empty groups (sized for max_groups)
+    fn new(state_id: StateId, max_groups: u32) -> Self {
+        // +1 because groups are 1-indexed, index 0 is unused
         SimState {
             state_id,
-            groups: HashMap::new(),
+            groups: vec![None; max_groups as usize],
         }
     }
 
-    fn with_groups(state_id: StateId, groups: HashMap<u32, (usize, usize)>) -> Self {
+    fn with_groups(state_id: StateId, groups: GroupStorage) -> Self {
         SimState { state_id, groups }
     }
 }
@@ -166,7 +179,7 @@ struct NfaSimulator<'a> {
     input_chars: Vec<char>,
     start_pos: usize,
     /// Memoization cache: (state_id, position) -> Option<groups> (Some if can reach accept, None if cannot)
-    memo: HashMap<(StateId, usize), Option<HashMap<u32, (usize, usize)>>>,
+    memo: HashMap<(StateId, usize), Option<GroupStorage>>,
 }
 
 impl<'a> NfaSimulator<'a> {
@@ -181,31 +194,22 @@ impl<'a> NfaSimulator<'a> {
     }
 
     /// Check if the result for a given state and position is memoized
-    fn check_memoized(
-        &self,
-        state_id: StateId,
-        pos: usize,
-    ) -> Option<Option<HashMap<u32, (usize, usize)>>> {
+    fn check_memoized(&self, state_id: StateId, pos: usize) -> Option<Option<GroupStorage>> {
         self.memo.get(&(state_id, pos)).cloned()
     }
 
     /// Store the result in the memoization cache
-    fn store_memoized(
-        &mut self,
-        state_id: StateId,
-        pos: usize,
-        result: Option<HashMap<u32, (usize, usize)>>,
-    ) {
+    fn store_memoized(&mut self, state_id: StateId, pos: usize, result: Option<GroupStorage>) {
         self.memo.insert((state_id, pos), result);
     }
 
     #[allow(clippy::type_complexity)]
     fn run(&mut self) -> Option<Match> {
         let mut pos = self.start_pos;
-        let mut last_accept: Option<(usize, HashMap<u32, (usize, usize)>)> = None;
+        let mut last_accept: Option<(usize, GroupStorage)> = None;
 
         // Initialize with start state
-        let mut current_states = vec![SimState::new(self.nfa.start)];
+        let mut current_states = vec![SimState::new(self.nfa.start, self.nfa.next_group_id())];
 
         // Apply epsilon closure to start state
         current_states = self.epsilon_closure(&current_states, pos);
@@ -250,7 +254,7 @@ impl<'a> NfaSimulator<'a> {
         &mut self,
         states: &[SimState],
         pos: usize,
-        last_accept: &mut Option<(usize, HashMap<u32, (usize, usize)>)>,
+        last_accept: &mut Option<(usize, GroupStorage)>,
     ) -> Vec<SimState> {
         let mut result = Vec::new();
 
@@ -297,8 +301,11 @@ impl<'a> NfaSimulator<'a> {
                 match transition {
                     Transition::Backref(group_id) => {
                         // Try to match the backreference
-                        if let Some((start, end)) = sim_state.groups.get(group_id) {
-                            let captured: String = self.input_chars[*start..*end].iter().collect();
+                        let idx = *group_id as usize;
+                        if idx < sim_state.groups.len()
+                            && let Some((start, end)) = sim_state.groups[idx]
+                        {
+                            let captured: String = self.input_chars[start..end].iter().collect();
                             let remaining: String = self.input_chars[pos..].iter().collect();
 
                             if remaining.starts_with(&captured) {
@@ -312,18 +319,22 @@ impl<'a> NfaSimulator<'a> {
                     }
                     Transition::BackrefRelative(relative) => {
                         // Resolve relative backreference (\g{-n})
-                        if let Some(group_id) = self.nfa.resolve_relative(*relative)
-                            && let Some((start, end)) = sim_state.groups.get(&group_id)
-                        {
-                            let captured: String = self.input_chars[*start..*end].iter().collect();
-                            let remaining: String = self.input_chars[pos..].iter().collect();
+                        if let Some(group_id) = self.nfa.resolve_relative(*relative) {
+                            let idx = group_id as usize;
+                            if idx < sim_state.groups.len()
+                                && let Some((start, end)) = sim_state.groups[idx]
+                            {
+                                let captured: String =
+                                    self.input_chars[start..end].iter().collect();
+                                let remaining: String = self.input_chars[pos..].iter().collect();
 
-                            if remaining.starts_with(&captured) {
-                                let consumed = captured.len().max(1);
-                                let new_state =
-                                    SimState::with_groups(*target, sim_state.groups.clone());
-                                new_states.push(new_state);
-                                chars_consumed = chars_consumed.max(consumed);
+                                if remaining.starts_with(&captured) {
+                                    let consumed = captured.len().max(1);
+                                    let new_state =
+                                        SimState::with_groups(*target, sim_state.groups.clone());
+                                    new_states.push(new_state);
+                                    chars_consumed = chars_consumed.max(consumed);
+                                }
                             }
                         }
                     }
@@ -466,13 +477,19 @@ impl<'a> NfaSimulator<'a> {
                     }
                     Transition::GroupStart(group_id) => {
                         let mut new_groups = sim_state.groups.clone();
-                        new_groups.insert(*group_id, (pos, pos)); // Start capturing
+                        let idx = *group_id as usize;
+                        if idx < new_groups.len() {
+                            new_groups[idx] = Some((pos, pos)); // Start capturing
+                        }
                         stack.push(SimState::with_groups(*target, new_groups));
                     }
                     Transition::GroupEnd(group_id) => {
                         let mut new_groups = sim_state.groups.clone();
-                        if let Some((start, _)) = new_groups.get(group_id) {
-                            new_groups.insert(*group_id, (*start, pos)); // End capturing
+                        let idx = *group_id as usize;
+                        if idx < new_groups.len()
+                            && let Some((start, _)) = new_groups[idx]
+                        {
+                            new_groups[idx] = Some((start, pos)); // End capturing
                         }
                         stack.push(SimState::with_groups(*target, new_groups));
                     }
@@ -484,7 +501,7 @@ impl<'a> NfaSimulator<'a> {
         closure
     }
 
-    fn find_accepting(&self, states: &[SimState]) -> Option<HashMap<u32, (usize, usize)>> {
+    fn find_accepting(&self, states: &[SimState]) -> Option<GroupStorage> {
         states
             .iter()
             .find(|s| s.state_id == self.nfa.accept)
