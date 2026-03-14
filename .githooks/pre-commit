@@ -31,7 +31,7 @@ git diff-index --check --cached $against -- || exit 1
 
 # ---- Rust checks ----
 cargo fmt --check || exit 1
-cargo check -p ogex -p ogex-cli || exit 1
+cargo check --workspace || exit 1
 cargo clippy -p ogex -p ogex-cli || exit 1
 cargo test -p ogex -p ogex-cli || exit 1
 
