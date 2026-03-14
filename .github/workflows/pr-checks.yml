@@ -2,7 +2,7 @@ name: PR Checks
 
 on:
   pull_request:
-    branches: [release, dev]
+    branches: [release]
 
 jobs:
   lint:

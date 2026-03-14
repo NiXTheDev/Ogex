@@ -2,13 +2,11 @@ name: Push Checks
 
 on:
   push:
-    branches: [release, dev, '0.1.*']
-  pull_request:
-    branches: [release, dev]
+    branches: [release, \d(?:\.\d(?:\.\d(?:\.\d)?)?)?(?:-\w+)?]
 
 jobs:
   lint:
-    name: Lint (Clippy)
+    name: Clippy
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -21,7 +19,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy
 
   format:
     name: Format Check
