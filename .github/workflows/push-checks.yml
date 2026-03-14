@@ -2,7 +2,10 @@ name: Push Checks
 
 on:
   push:
-    branches: [release, \d(?:\.\d(?:\.\d(?:\.\d)?)?)?(?:-\w+\d?)?]
+    branches:
+      - release
+      - '[0-9]+.[0-9]*.[0-9]*'
+      - '[0-9]+.[0-9]*.[0-9]*-*'
 
 jobs:
   lint:
