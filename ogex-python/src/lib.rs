@@ -80,9 +80,12 @@ impl PyRegex {
 
             // Get groups as pairs in order
             let mut group_pairs = vec![(0usize, 0usize); m.groups.len()];
-            for (&idx, &(s, e)) in &m.groups {
-                if idx > 0 && (idx as usize) <= group_pairs.len() {
-                    group_pairs[(idx - 1) as usize] = (s, e);
+            for (idx, opt) in m.groups.iter().enumerate() {
+                if let Some((s, e)) = opt {
+                    // idx 0 is unused (groups are 1-indexed)
+                    if idx > 0 && idx < group_pairs.len() {
+                        group_pairs[idx - 1] = (*s, *e);
+                    }
                 }
             }
 
@@ -115,10 +118,18 @@ pub struct PyMatch {
 
 impl PyMatch {
     fn new(m: Match, input: String) -> Self {
+        // Convert Vec<Option<(usize, usize)>> to HashMap<u32, (usize, usize)>
+        let mut groups = StdHashMap::new();
+        for (idx, opt) in m.groups.iter().enumerate() {
+            if let Some((s, e)) = opt {
+                // idx 0 is unused (groups are 1-indexed), so store as (idx + 1)
+                groups.insert((idx + 1) as u32, (*s, *e));
+            }
+        }
         PyMatch {
             start: m.start,
             end: m.end,
-            groups: m.groups,
+            groups,
             input,
         }
     }
