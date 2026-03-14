@@ -32,4 +32,5 @@ harness = false
 
 [dev-dependencies]
 criterion = { workspace = true }
+proptest = "1.5"
 

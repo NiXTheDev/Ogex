@@ -578,6 +578,43 @@ impl Nfa {
         let actual_index = self.numbered_groups.len() - reverse_index;
         Some(self.numbered_groups[actual_index])
     }
+
+    /// Check if the pattern contains only ASCII characters and no Unicode features
+    ///
+    /// This is used to optimize matching by avoiding UTF-8 decoding when possible.
+    /// A pattern is ASCII-only if:
+    /// - All literal characters are ASCII (0-127)
+    /// - No Unicode shorthand classes (\p, \P) are used (they use ASCII shortcuts \w, \d, \s)
+    /// - Character classes only contain ASCII characters
+    pub fn is_ascii_only(&self) -> bool {
+        // Check all states for non-ASCII transitions
+        for state in &self.states {
+            for (transition, _) in &state.transitions {
+                match transition {
+                    Transition::Char(c) => {
+                        if *c as u32 > 127 {
+                            return false;
+                        }
+                    }
+                    Transition::CharClass { lookup, .. } => {
+                        // Check if lookup table has any bits set for non-ASCII (128-255)
+                        // Bytes 16-31 correspond to characters 128-255
+                        if lookup[16..32].iter().any(|&b| b != 0) {
+                            return false;
+                        }
+                    }
+                    // All other transition types are ASCII-compatible
+                    // - Any (.) works with bytes
+                    // - Anchors work with byte positions
+                    // - Word boundaries work with byte positions
+                    // - Backreferences work with byte slices
+                    // - Epsilon transitions don't depend on character encoding
+                    _ => {}
+                }
+            }
+        }
+        true
+    }
 }
 
 impl Default for Nfa {

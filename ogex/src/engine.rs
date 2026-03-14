@@ -176,7 +176,10 @@ impl SimState {
 struct NfaSimulator<'a> {
     nfa: &'a Nfa,
     _input: &'a str,
-    input_chars: Vec<char>,
+    /// Input as bytes for ASCII mode, or as chars for Unicode mode
+    input_bytes: &'a [u8],
+    /// Whether to use ASCII/byte mode (true) or Unicode/char mode (false)
+    ascii_mode: bool,
     start_pos: usize,
     /// Memoization cache: (state_id, position) -> Option<groups> (Some if can reach accept, None if cannot)
     memo: HashMap<(StateId, usize), Option<GroupStorage>>,
@@ -184,10 +187,12 @@ struct NfaSimulator<'a> {
 
 impl<'a> NfaSimulator<'a> {
     fn new(nfa: &'a Nfa, input: &'a str, start_pos: usize) -> Self {
+        let ascii_mode = nfa.is_ascii_only();
         NfaSimulator {
             nfa,
             _input: input,
-            input_chars: input.chars().collect(),
+            input_bytes: input.as_bytes(),
+            ascii_mode,
             start_pos,
             memo: HashMap::new(),
         }
@@ -205,6 +210,14 @@ impl<'a> NfaSimulator<'a> {
 
     #[allow(clippy::type_complexity)]
     fn run(&mut self) -> Option<Match> {
+        // Determine input length and get current character/byte
+        let input_len = if self.ascii_mode {
+            self.input_bytes.len()
+        } else {
+            // For Unicode mode, we need char length
+            self._input.chars().count()
+        };
+
         let mut pos = self.start_pos;
         let mut last_accept: Option<(usize, GroupStorage)> = None;
 
@@ -218,8 +231,15 @@ impl<'a> NfaSimulator<'a> {
         // Use memoization for each state in the closure
         current_states = self.memoize_closure(&current_states, pos, &mut last_accept);
 
-        while pos < self.input_chars.len() {
-            let c = self.input_chars[pos];
+        while pos < input_len {
+            let c = if self.ascii_mode {
+                // ASCII mode: use bytes
+                self.input_bytes[pos] as char
+            } else {
+                // Unicode mode: use chars
+                self._input.chars().nth(pos).unwrap_or('\0')
+            };
+
             let (new_states, chars_consumed) = self.step_with_backrefs(&current_states, c, pos);
             current_states = new_states;
 
@@ -305,15 +325,29 @@ impl<'a> NfaSimulator<'a> {
                         if idx < sim_state.groups.len()
                             && let Some((start, end)) = sim_state.groups[idx]
                         {
-                            let captured: String = self.input_chars[start..end].iter().collect();
-                            let remaining: String = self.input_chars[pos..].iter().collect();
-
-                            if remaining.starts_with(&captured) {
-                                let consumed = captured.len().max(1);
-                                let new_state =
-                                    SimState::with_groups(*target, sim_state.groups.clone());
-                                new_states.push(new_state);
-                                chars_consumed = chars_consumed.max(consumed);
+                            if self.ascii_mode {
+                                // ASCII mode: use bytes
+                                let captured = &self.input_bytes[start..end];
+                                let remaining = &self.input_bytes[pos..];
+                                if remaining.starts_with(captured) {
+                                    let consumed = captured.len().max(1);
+                                    let new_state =
+                                        SimState::with_groups(*target, sim_state.groups.clone());
+                                    new_states.push(new_state);
+                                    chars_consumed = chars_consumed.max(consumed);
+                                }
+                            } else {
+                                // Unicode mode: use chars
+                                let captured: String =
+                                    self._input.chars().skip(start).take(end - start).collect();
+                                let remaining: String = self._input.chars().skip(pos).collect();
+                                if remaining.starts_with(&captured) {
+                                    let consumed = captured.len().max(1);
+                                    let new_state =
+                                        SimState::with_groups(*target, sim_state.groups.clone());
+                                    new_states.push(new_state);
+                                    chars_consumed = chars_consumed.max(consumed);
+                                }
                             }
                         }
                     }
@@ -324,16 +358,33 @@ impl<'a> NfaSimulator<'a> {
                             if idx < sim_state.groups.len()
                                 && let Some((start, end)) = sim_state.groups[idx]
                             {
-                                let captured: String =
-                                    self.input_chars[start..end].iter().collect();
-                                let remaining: String = self.input_chars[pos..].iter().collect();
-
-                                if remaining.starts_with(&captured) {
-                                    let consumed = captured.len().max(1);
-                                    let new_state =
-                                        SimState::with_groups(*target, sim_state.groups.clone());
-                                    new_states.push(new_state);
-                                    chars_consumed = chars_consumed.max(consumed);
+                                if self.ascii_mode {
+                                    // ASCII mode: use bytes
+                                    let captured = &self.input_bytes[start..end];
+                                    let remaining = &self.input_bytes[pos..];
+                                    if remaining.starts_with(captured) {
+                                        let consumed = captured.len().max(1);
+                                        let new_state = SimState::with_groups(
+                                            *target,
+                                            sim_state.groups.clone(),
+                                        );
+                                        new_states.push(new_state);
+                                        chars_consumed = chars_consumed.max(consumed);
+                                    }
+                                } else {
+                                    // Unicode mode: use chars
+                                    let captured: String =
+                                        self._input.chars().skip(start).take(end - start).collect();
+                                    let remaining: String = self._input.chars().skip(pos).collect();
+                                    if remaining.starts_with(&captured) {
+                                        let consumed = captured.len().max(1);
+                                        let new_state = SimState::with_groups(
+                                            *target,
+                                            sim_state.groups.clone(),
+                                        );
+                                        new_states.push(new_state);
+                                        chars_consumed = chars_consumed.max(consumed);
+                                    }
                                 }
                             }
                         }
@@ -442,8 +493,11 @@ impl<'a> NfaSimulator<'a> {
                         if self.nfa.mode_flags.multiline {
                             // In multiline mode, ^ matches at start of string or after newline
                             let is_start = pos == self.start_pos;
-                            let is_after_newline =
-                                pos > 0 && self.input_chars.get(pos - 1) == Some(&'\n');
+                            let is_after_newline = if self.ascii_mode {
+                                pos > 0 && self.input_bytes[pos - 1] == b'\n'
+                            } else {
+                                pos > 0 && self._input.chars().nth(pos - 1) == Some('\n')
+                            };
                             if is_start || is_after_newline {
                                 stack
                                     .push(SimState::with_groups(*target, sim_state.groups.clone()));
@@ -455,14 +509,31 @@ impl<'a> NfaSimulator<'a> {
                     Transition::EndAnchor => {
                         if self.nfa.mode_flags.multiline {
                             // In multiline mode, $ matches at end of string or before newline
-                            let is_end = pos == self.input_chars.len();
-                            let is_before_newline = self.input_chars.get(pos) == Some(&'\n');
+                            let input_len = if self.ascii_mode {
+                                self.input_bytes.len()
+                            } else {
+                                self._input.chars().count()
+                            };
+                            let is_end = pos == input_len;
+                            let is_before_newline = if self.ascii_mode {
+                                self.input_bytes.get(pos) == Some(&b'\n')
+                            } else {
+                                self._input.chars().nth(pos) == Some('\n')
+                            };
                             if is_end || is_before_newline {
                                 stack
                                     .push(SimState::with_groups(*target, sim_state.groups.clone()));
                             }
-                        } else if pos == self.input_chars.len() {
-                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        } else {
+                            let input_len = if self.ascii_mode {
+                                self.input_bytes.len()
+                            } else {
+                                self._input.chars().count()
+                            };
+                            if pos == input_len {
+                                stack
+                                    .push(SimState::with_groups(*target, sim_state.groups.clone()));
+                            }
                         }
                     }
                     Transition::WordBoundary => {
@@ -509,10 +580,25 @@ impl<'a> NfaSimulator<'a> {
     }
 
     fn is_word_boundary(&self, pos: usize) -> bool {
-        let left_is_word = pos > 0 && self.is_word_char(self.input_chars[pos - 1]);
-        let right_is_word =
-            pos < self.input_chars.len() && self.is_word_char(self.input_chars[pos]);
+        let (left_is_word, right_is_word) = if self.ascii_mode {
+            // ASCII mode: use bytes
+            let left_is_word = pos > 0 && self.is_word_byte(self.input_bytes[pos - 1]);
+            let right_is_word =
+                pos < self.input_bytes.len() && self.is_word_byte(self.input_bytes[pos]);
+            (left_is_word, right_is_word)
+        } else {
+            // Unicode mode: use chars
+            let left_is_word =
+                pos > 0 && self.is_word_char(self._input.chars().nth(pos - 1).unwrap_or('\0'));
+            let right_is_word = pos < self._input.chars().count()
+                && self.is_word_char(self._input.chars().nth(pos).unwrap_or('\0'));
+            (left_is_word, right_is_word)
+        };
         left_is_word != right_is_word
+    }
+
+    fn is_word_byte(&self, b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_'
     }
 
     fn is_word_char(&self, c: char) -> bool {
