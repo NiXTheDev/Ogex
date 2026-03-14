@@ -15,4 +15,4 @@ path = "src/main.rs"
 [dependencies]
 ogex = { path = "../ogex" }
 clap = { version = "4.0", features = ["derive"] }
-colored = "2.0"
+colored = "3.1"
