@@ -300,7 +300,10 @@ impl<'a> NfaSimulator<'a> {
                     *tc == c
                 }
             }
-            Transition::CharClass { negated: _negated, lookup } => {
+            Transition::CharClass {
+                negated: _negated,
+                lookup,
+            } => {
                 // O(1) lookup using pre-computed table (negation already handled in lookup)
                 if c as u32 > 255 {
                     // For non-ASCII, fall back to simple check
@@ -357,7 +360,7 @@ impl<'a> NfaSimulator<'a> {
                 if matches!(transition, Transition::Epsilon) {
                     continue;
                 }
-                
+
                 if closure.iter().any(|s| s.state_id == *target) {
                     continue;
                 }

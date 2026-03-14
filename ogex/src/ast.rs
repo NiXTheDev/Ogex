@@ -167,11 +167,7 @@ impl CharacterClass {
                     _ => false,
                 },
             });
-            if self.negated {
-                !matched
-            } else {
-                matched
-            }
+            if self.negated { !matched } else { matched }
         } else {
             let byte_idx = (c as u8 / 8) as usize;
             let bit_idx = c as u8 % 8;
