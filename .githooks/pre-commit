@@ -1,0 +1,28 @@
+#!/bin/sh
+
+# Exit immediately if any command fails
+set -e
+
+# Define formatting codes for nicer output (optional)
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+echo "🔍 Running cargo fmt --check..."
+cargo fmt --check
+echo -e "${GREEN}✅ cargo fmt passed${NC}"
+
+echo "🔍 Running cargo check..."
+cargo check -p ogex -p ogex-cli
+echo -e "${GREEN}✅ cargo check passed${NC}"
+
+echo "🔍 Running cargo clippy..."
+# Deny warnings to keep the code clean (adjust if you prefer just warnings)
+cargo clippy -p ogex -p ogex-cli
+echo -e "${GREEN}✅ cargo clippy passed${NC}"
+
+echo "🔍 Running cargo test --workspace..."
+cargo test -p ogex -p ogex-cli
+echo -e "${GREEN}✅ cargo test passed${NC}"
+
+echo -e "${GREEN}🎉 All checks passed – committing!${NC}"
