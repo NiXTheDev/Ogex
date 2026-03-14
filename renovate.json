@@ -1,0 +1,51 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "baseBranches": [
+    "+([0-9]).+([0-9]).+([0-9])",
+    "+([0-9]).+([0-9]).+([0-9])-*"
+  ],
+  "schedule": ["before 6am on monday"],
+  "timezone": "UTC",
+  "commitMessagePrefix": "deps:",
+  "prHourlyLimit": 2,
+  "prConcurrentLimit": 5,
+  "packageRules": [
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "rust minor and patch dependencies",
+      "groupSlug": "rust-minor-patch",
+      "labels": ["dependencies", "rust"],
+      "rangeStrategy": "update-lockfile",
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "rust major dependencies",
+      "groupSlug": "rust-major",
+      "labels": ["dependencies", "rust", "major"],
+      "rangeStrategy": "bump"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "github actions minor and patch dependencies",
+      "groupSlug": "github-actions-minor-patch",
+      "labels": ["dependencies", "GHA"],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "github actions major dependencies",
+      "groupSlug": "github-actions-major",
+      "labels": ["dependencies", "GHA", "major"]
+    }
+  ]
+}
