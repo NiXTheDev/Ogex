@@ -26,33 +26,13 @@ pub struct JsError {
 #[cfg(feature = "wasm")]
 #[wasm_bindgen]
 impl JsError {
-    /// Create a new JS error from a RegexError (internal helper)
-    fn from_error_internal(e: crate::RegexError) -> JsError {
-        match e {
-            crate::RegexError::Lexer { position, kind } => JsError {
-                error_type: "Lexer".to_string(),
-                message: kind.to_string(),
-                position: Some(position),
-                context: Some(format!("{:?}", kind)),
-            },
-            crate::RegexError::Parse(parse_err) => JsError {
-                error_type: "Parser".to_string(),
-                message: parse_err.to_string(),
-                position: None,
-                context: None,
-            },
-            crate::RegexError::Compile(msg) => JsError {
-                error_type: "Compile".to_string(),
-                message: msg,
-                position: None,
-                context: None,
-            },
-            crate::RegexError::Runtime(msg) => JsError {
-                error_type: "Runtime".to_string(),
-                message: msg,
-                position: None,
-                context: None,
-            },
+    /// Create a new JS error from error message (internal helper)
+    fn from_message(error_type: &str, message: String) -> JsError {
+        JsError {
+            error_type: error_type.to_string(),
+            message,
+            position: None,
+            context: None,
         }
     }
 
@@ -116,7 +96,7 @@ impl JsRegex {
     pub fn new(pattern: &str) -> Result<JsRegex, JsError> {
         match Regex::new(pattern) {
             Ok(regex) => Ok(JsRegex { regex }),
-            Err(e) => Err(JsError::from_error_internal(e)),
+            Err(e) => Err(JsError::from_message("Compile", e.to_string())),
         }
     }
 
@@ -170,7 +150,7 @@ impl JsRegex {
     pub fn transpile(pattern: &str) -> Result<String, JsError> {
         match crate::transpile(pattern) {
             Ok(result) => Ok(result),
-            Err(e) => Err(JsError::from_error_internal(e)),
+            Err(e) => Err(JsError::from_message("Compile", e.to_string())),
         }
     }
 

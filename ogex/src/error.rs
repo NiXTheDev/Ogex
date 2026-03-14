@@ -6,7 +6,8 @@
 use thiserror::Error;
 
 /// The main error type for the regex engine
-#[derive(Error, Debug, Clone, PartialEq)]
+#[derive(Error, Debug)]
+#[cfg_attr(not(feature = "wasm"), derive(Clone, PartialEq))]
 pub enum RegexError {
     /// Errors that occur during lexing/tokenization
     #[error("lexer error at position {position}: {kind}")]
@@ -31,7 +32,8 @@ pub enum RegexError {
 }
 
 /// Specific kinds of lexer errors
-#[derive(Error, Debug, Clone, PartialEq)]
+#[derive(Error, Debug)]
+#[cfg_attr(not(feature = "wasm"), derive(Clone, PartialEq))]
 pub enum LexerErrorKind {
     /// Encountered an unexpected character
     #[error("unexpected character '{0}'")]
@@ -55,7 +57,8 @@ pub enum LexerErrorKind {
 }
 
 /// Errors that occur during parsing
-#[derive(Error, Debug, Clone, PartialEq)]
+#[derive(Error, Debug)]
+#[cfg_attr(not(feature = "wasm"), derive(Clone, PartialEq))]
 pub enum ParseError {
     /// Unexpected token encountered
     #[error("expected {expected}, found {found}")]
@@ -142,6 +145,7 @@ impl SpannedError {
 /// Result type alias for regex operations
 pub type Result<T> = std::result::Result<T, RegexError>;
 
+#[cfg(not(feature = "wasm"))]
 #[cfg(test)]
 mod tests {
     use super::*;

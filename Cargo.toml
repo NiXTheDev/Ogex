@@ -14,8 +14,6 @@ keywords = ["regex", "parsing", "text", "pattern"]
 categories = ["text-processing", "parsing"]
 
 [workspace.dependencies]
-thiserror = "2.0"
-criterion = "0.8"
 
 [profile.release]
 lto = true
