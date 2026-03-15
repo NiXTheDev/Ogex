@@ -57,15 +57,29 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          wasm-pack --version
 
       - name: Build WASM
-        run: wasm-pack build ogex --target bundler --features wasm
+        run: wasm-pack build ogex --target bundler --release --features wasm
 
-      - name: Create npm package
+      - name: Update package.json
         run: |
           cd ogex/pkg
-          npm publish --access public
+          npm pkg set name="@ogex/ogex"
+          npm pkg set version="${{ github.ref_name }}"
+          npm pkg set description="Ogex regex engine for JavaScript/TypeScript"
+          npm pkg set repository.type="git"
+          npm pkg set repository.url="https://github.com/NiXTheDev/Ogex"
+          npm pkg set keywords="[regex,pattern-matching]"
+          npm pkg set license="MPL-2.0"
+          npm pkg set main="ogex.js"
+          npm pkg set types="ogex.d.ts"
+          cat package.json
+
+      - name: Publish to npm
+        run: cd ogex/pkg && npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
