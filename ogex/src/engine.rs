@@ -584,6 +584,22 @@ impl<'a> NfaSimulator<'a> {
                             stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
                         }
                     }
+                    Transition::Lookbehind(inner_nfa) => {
+                        // Check if the inner pattern matches at the position BEFORE current
+                        // (lookbehind checks what comes immediately before current position)
+                        // If at position 0, nothing precedes it, so lookbehind always fails
+                        if self.check_lookbehind(inner_nfa, pos) {
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        }
+                    }
+                    Transition::NegativeLookbehind(inner_nfa) => {
+                        // Check if the inner pattern does NOT match at the position before current
+                        // At position 0, nothing precedes it, so it's NOT preceded by any pattern
+                        // Negative lookbehind succeeds at position 0
+                        if !self.check_lookbehind(inner_nfa, pos) {
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        }
+                    }
                     _ => {} // Char/CharClass handled in step
                 }
             }
@@ -634,6 +650,27 @@ impl<'a> NfaSimulator<'a> {
         };
         // Use try_match_at to check if pattern matches without consuming beyond
         regex.try_match_at(self._input, pos)
+    }
+
+    /// Check if an inner NFA matches immediately BEFORE a specific position
+    /// Used for lookbehind assertions
+    fn check_lookbehind(&self, inner_nfa: &Nfa, pos: usize) -> bool {
+        // For lookbehind, we need to check if the pattern matches immediately before pos
+        // That means the pattern should match ending at pos-1
+        let regex = Regex {
+            nfa: inner_nfa.clone(),
+        };
+        // Try to find a match that ends exactly at pos
+        // We check all possible starting positions from 0 to pos
+        for start in 0..=pos {
+            if let Some(m) = regex.match_from(self._input, start) {
+                // Check if this match ends exactly at pos (i.e., immediately before current pos)
+                if m.end == pos {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 

@@ -1,0 +1,83 @@
+name: Release (Dry Run)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to simulate (e.g., 0.1.1)'
+        required: false
+        default: '0.1.1'
+      dry_run:
+        description: 'Dry run mode'
+        required: false
+        default: 'true'
+
+jobs:
+  dry-run:
+    name: Dry Run Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: get_version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(grep -m1 'version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "Dry run version: $VERSION"
+
+      - name: Simulate crate builds
+        run: |
+          echo "=== DRY RUN: Would build crates ==="
+          echo "- ogex (publish to crates.io)"
+          echo "- ogex-cli (publish to crates.io)"
+          echo "- ogex-python (skip - no publish)"
+
+      - name: Simulate npm publish
+        run: |
+          echo "=== DRY RUN: Would publish to npm ==="
+          echo "- Package: @ogex/ogex@${{ steps.get_version.outputs.version }}"
+          echo "- Scope: ogex"
+          echo "- Target: nodejs"
+          echo "- Files: ogex_bg.wasm, ogex.js, ogex_bg.js, ogex.d.ts"
+
+      - name: Simulate PyPI publish
+        run: |
+          echo "=== DRY RUN: Would publish to PyPI ==="
+          echo "- Package: ogex-python"
+          echo "- Version: ${{ steps.get_version.outputs.version }}"
+          echo "- Python: 3.14"
+
+      - name: Simulate GitHub Release
+        run: |
+          echo "=== DRY RUN: Would create GitHub Release ==="
+          echo "- Tag: ${{ steps.get_version.outputs.tag }}"
+          echo "- Name: Release ${{ steps.get_version.outputs.tag }}"
+          echo "- Body: Full release notes with lookaround improvements, bug fixes, package info"
+
+      - name: Simulate Git Tag
+        run: |
+          echo "=== DRY RUN: Would create Git Tag ==="
+          echo "- Tag: ${{ steps.get_version.outputs.tag }}"
+          echo "- Message: Release ${{ steps.get_version.outputs.tag }}"
+
+      - name: Summary
+        run: |
+          echo "## Dry Run Summary"
+          echo ""
+          echo "| Step | Status |"
+          echo "|------|--------|"
+          echo "| GitHub Release | Would create |"
+          echo "| Git Tag | Would create |"
+          echo "| crates.io (ogex) | Would publish |"
+          echo "| crates.io (ogex-cli) | Would publish |"
+          echo "| npm (@ogex/ogex) | Would publish |"
+          echo "| PyPI (ogex) | Would publish |"
+          echo ""
+          echo "**This was a dry run. No actual changes were made.**"

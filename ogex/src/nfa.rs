@@ -50,6 +50,12 @@ pub enum Transition {
     /// Negative lookahead assertion (@>~:pattern)
     /// Contains the compiled NFA for the inner pattern
     NegativeLookahead(Nfa),
+    /// Positive lookbehind assertion (@<:pattern)
+    /// Contains the compiled NFA for the inner pattern
+    Lookbehind(Nfa),
+    /// Negative lookbehind assertion (@<~:pattern)
+    /// Contains the compiled NFA for the inner pattern
+    NegativeLookbehind(Nfa),
 }
 
 /// An NFA state
@@ -220,9 +226,8 @@ impl Nfa {
             Expr::NonWordBoundary => self.compile_word_boundary(true),
             Expr::Lookahead(expr) => self.compile_lookahead(expr, true),
             Expr::NegativeLookahead(expr) => self.compile_lookahead(expr, false),
-
-            // Lookbehind is TODO
-            Expr::Lookbehind(_) | Expr::NegativeLookbehind(_) => self.compile_empty(),
+            Expr::Lookbehind(expr) => self.compile_lookbehind(expr, true),
+            Expr::NegativeLookbehind(expr) => self.compile_lookbehind(expr, false),
         }
     }
 
@@ -242,6 +247,27 @@ impl Nfa {
             self.add_transition(start, Transition::Lookahead(inner_nfa), accept);
         } else {
             self.add_transition(start, Transition::NegativeLookahead(inner_nfa), accept);
+        }
+
+        (start, accept)
+    }
+
+    /// Compile a lookbehind assertion
+    ///
+    /// # Arguments
+    /// * `expr` - The inner pattern to match
+    /// * `positive` - If true, positive lookbehind (@<:), if false, negative lookbehind (@<~:)
+    fn compile_lookbehind(&mut self, expr: &Expr, positive: bool) -> (StateId, StateId) {
+        // Compile the inner pattern into a separate NFA
+        let inner_nfa = Nfa::from_expr(expr);
+
+        let start = self.new_state();
+        let accept = self.new_state();
+
+        if positive {
+            self.add_transition(start, Transition::Lookbehind(inner_nfa), accept);
+        } else {
+            self.add_transition(start, Transition::NegativeLookbehind(inner_nfa), accept);
         }
 
         (start, accept)

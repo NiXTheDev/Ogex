@@ -404,8 +404,59 @@ impl<'a> Lexer<'a> {
                     self.advance();
                 }
 
-                // Handle (?...) or (@...) syntax
-                if self.current_char == Some('?') || self.current_char == Some('@') {
+                // Handle (?...) or (@...) or lookarounds directly (>:pattern) or (<:pattern)
+                if self.current_char == Some('?')
+                    || self.current_char == Some('@')
+                    || self.current_char == Some('>')
+                    || self.current_char == Some('<')
+                {
+                    // Handle lookarounds without @ or ?
+                    // (>:pattern), (>~:pattern), (<:pattern), (<~:pattern)
+                    if self.current_char == Some('>') || self.current_char == Some('<') {
+                        let modifier = match self.current_char {
+                            Some('>') => {
+                                self.advance(); // consume '>'
+                                // Check for negation ~ after >
+                                if self.current_char == Some('~') {
+                                    self.advance(); // consume ~
+                                    "~l" // Negative lookahead
+                                } else {
+                                    ">l" // Positive lookahead
+                                }
+                            }
+                            Some('<') => {
+                                self.advance(); // consume '<'
+                                // Check for negation ~ after <
+                                if self.current_char == Some('~') {
+                                    self.advance(); // consume ~
+                                    "~b" // Negative lookbehind
+                                } else {
+                                    "<b" // Positive lookbehind
+                                }
+                            }
+                            _ => "", // shouldn't happen
+                        };
+                        // Expect colon after modifier
+                        if self.current_char == Some(':') {
+                            self.advance(); // consume ':'
+                            let modifier_str: &str = modifier;
+                            return match modifier_str {
+                                ">l" => Token::Lookahead,
+                                "~l" => Token::NegativeLookahead,
+                                "<b" => Token::Lookbehind,
+                                "~b" => Token::NegativeLookbehind,
+                                _ => {
+                                    // Not a lookaround, reset
+                                    self.position = start_pos;
+                                    self.current_char = Some('(');
+                                    self.advance();
+                                    Token::LeftParen
+                                }
+                            };
+                        }
+                    }
+
+                    // Handle (?...) or (@...) syntax
                     // If @, don't consume yet - handle in modifier matching
                     if self.current_char == Some('@') {
                         // Will be consumed in modifier matching
@@ -428,9 +479,9 @@ impl<'a> Lexer<'a> {
                                 // Check for negation ~ after >
                                 if self.current_char == Some('~') {
                                     self.advance(); // consume ~
-                                    '~'
+                                    "~l" // Negative lookahead
                                 } else {
-                                    '>'
+                                    ">l" // Positive lookahead
                                 }
                             }
                             Some('<') => {
@@ -438,18 +489,18 @@ impl<'a> Lexer<'a> {
                                 // Check for negation ~ after <
                                 if self.current_char == Some('~') {
                                     self.advance(); // consume ~
-                                    '~'
+                                    "~b" // Negative lookbehind
                                 } else {
-                                    '<'
+                                    "<b" // Positive lookbehind
                                 }
                             }
                             Some('*') => {
                                 self.advance(); // consume '*'
-                                '*'
+                                "*"
                             }
                             Some('%') => {
                                 self.advance(); // consume '%'
-                                '%'
+                                "%"
                             }
                             Some('?') => {
                                 // (@?:pattern) is non-capturing group, but could also be (?P<...> or (?<...
@@ -514,13 +565,15 @@ impl<'a> Lexer<'a> {
                         // Expect colon after modifier
                         if self.current_char == Some(':') {
                             self.advance(); // consume ':'
-                            return match modifier {
-                                '>' => Token::Lookahead,
-                                '~' => Token::NegativeLookahead,
-                                '<' => Token::Lookbehind,
-                                '*' => Token::Atomic,
-                                '%' => Token::Conditional,
-                                '?' => Token::NonCapturing,
+                            let modifier_str: &str = modifier;
+                            return match modifier_str {
+                                ">l" => Token::Lookahead,
+                                "~l" => Token::NegativeLookahead,
+                                "<b" => Token::Lookbehind,
+                                "~b" => Token::NegativeLookbehind,
+                                "*" => Token::Atomic,
+                                "%" => Token::Conditional,
+                                "?" => Token::NonCapturing,
                                 _ => {
                                     // This shouldn't happen but handle gracefully
                                     self.position = start_pos;
