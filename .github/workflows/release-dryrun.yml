@@ -31,25 +31,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Get PR with Release label
-          PR_INFO=$(gh pr list --repo ${{ github.repository }} --label Release --json number,title,body -q '.[0]')
-          PR_NUMBER=$(echo "$PR_INFO" | jq -r '.number // empty')
+          # Get PR with Release label - get first one
+          PR_JSON=$(gh pr list --repo ${{ github.repository }} --label Release --limit 1 --json number,title,body 2>/dev/null)
 
-          if [ -z "$PR_NUMBER" ]; then
+          if [ -z "$PR_JSON" ] || [ "$PR_JSON" = "[]" ]; then
             echo "No PR with Release label found"
             echo "pr_number=" >> $GITHUB_OUTPUT
             echo "title=" >> $GITHUB_OUTPUT
             echo "body=" >> $GITHUB_OUTPUT
           else
+            PR_NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number')
             echo "Found PR #$PR_NUMBER"
             echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
 
             # Get PR title
-            PR_TITLE=$(echo "$PR_INFO" | jq -r '.title // "Release"')
+            PR_TITLE=$(echo "$PR_JSON" | jq -r '.[0].title // "Release"')
             echo "title=$PR_TITLE" >> $GITHUB_OUTPUT
 
             # Get PR body
-            PR_BODY=$(echo "$PR_INFO" | jq -r '.body // "No description provided"')
+            PR_BODY=$(echo "$PR_JSON" | jq -r '.[0].body // "No description provided"')
             echo "body=$PR_BODY" >> $GITHUB_OUTPUT
           fi
 
