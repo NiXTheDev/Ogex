@@ -1,6 +1,9 @@
 name: WASM Build Test
 
 on:
+  push:
+    branches:
+      - 0.1.1
   workflow_dispatch:
 
 jobs:
