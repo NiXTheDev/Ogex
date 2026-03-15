@@ -1,12 +1,6 @@
 name: Release (Dry Run)
 
 on:
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: 'PR number to pull release notes from (optional)'
-        required: false
-        default: ''
   push:
     branches:
       - 0.1.1
@@ -37,20 +31,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          PR_NUMBER="$(gh pr list --repo ${{ github.repository }} --label Release | jq -r '.[0].id')"
-          echo "Fetching PR #$PR_NUMBER..."
+          # Get PR with Release label
+          PR_INFO=$(gh pr list --repo ${{ github.repository }} --label Release --json number,title,body -q '.[0]')
+          PR_NUMBER=$(echo "$PR_INFO" | jq -r '.number // empty')
 
-          # Get PR title
-          PR_TITLE=$(gh pr view $PR_NUMBER --repo ${{ github.repository }} --json title -q '.title')
-          echo "title=$PR_TITLE" >> $GITHUB_OUTPUT
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No PR with Release label found"
+            echo "pr_number=" >> $GITHUB_OUTPUT
+            echo "title=" >> $GITHUB_OUTPUT
+            echo "body=" >> $GITHUB_OUTPUT
+          else
+            echo "Found PR #$PR_NUMBER"
+            echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
 
-          # Get PR body
-          PR_BODY=$(gh pr view $PR_NUMBER --repo ${{ github.repository }} --json body -q '.body')
-          # Use default if body is empty
-          if [ -z "$PR_BODY" ]; then
-            PR_BODY="No description provided"
+            # Get PR title
+            PR_TITLE=$(echo "$PR_INFO" | jq -r '.title // "Release"')
+            echo "title=$PR_TITLE" >> $GITHUB_OUTPUT
+
+            # Get PR body
+            PR_BODY=$(echo "$PR_INFO" | jq -r '.body // "No description provided"')
+            echo "body=$PR_BODY" >> $GITHUB_OUTPUT
           fi
-          echo "body=$PR_BODY" >> $GITHUB_OUTPUT
 
       - name: Generate release notes
         id: release_notes
@@ -58,7 +59,7 @@ jobs:
           VERSION="${{ steps.get_version.outputs.version }}"
           TAG="${{ steps.get_version.outputs.tag }}"
 
-          if [ -n "${{ github.event.inputs.pr_number }}" ]; then
+          if [ -n "${{ steps.get_pr.outputs.pr_number }}" ]; then
             # Use PR title as release name
             RELEASE_NAME="${{ steps.get_pr.outputs.title }}"
             # Use PR body as release body (or fallback)
