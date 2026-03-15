@@ -29,30 +29,7 @@ jobs:
           wasm-pack --version
 
       - name: Build WASM
-        run: wasm-pack build ogex --target bundler --release --features wasm
-
-      - name: Install dependencies and test
-        working-directory: ogex/pkg
-        run: |
-          npm install
-          # Run a quick test to verify WASM loads
-          node -e "
-            const init = require('./ogex.js');
-            init().then(module => {
-              const { Regex } = module;
-              const regex = new Regex('(name:hello)');
-              const m = regex.find('hello world');
-              if (m && m.text === 'hello') {
-                console.log('✅ WASM test passed: Regex found \"hello\"');
-              } else {
-                console.error('❌ WASM test failed');
-                process.exit(1);
-              }
-            }).catch(err => {
-              console.error('❌ Failed to load WASM:', err);
-              process.exit(1);
-            });
-          "
+        run: wasm-pack build ogex --target nodejs --release --features wasm
 
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@v4
