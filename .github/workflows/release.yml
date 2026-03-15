@@ -64,6 +64,19 @@ jobs:
       - name: Build WASM
         run: wasm-pack build ogex --target bundler --release --features wasm
 
+      - name: Add Regex alias export
+        run: |
+          cd ogex/pkg
+          # Add Regex, Match, Error as aliases for JsRegex, JsMatch, JsError
+          # The bundler target uses ESM, so we add additional exports to ogex.js
+          node -e "
+            const fs = require('fs');
+            let js = fs.readFileSync('ogex.js', 'utf8');
+            // Add alias exports after the main export
+            const aliases = '\\nexport { JsRegex as Regex, JsMatch as Match, JsError as Error };';
+            fs.writeFileSync('ogex.js', js + aliases);
+          "
+
       - name: Update package.json
         run: |
           cd ogex/pkg

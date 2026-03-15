@@ -31,6 +31,32 @@ jobs:
       - name: Build WASM
         run: wasm-pack build ogex --target nodejs --release --features wasm
 
+      - name: Add Regex alias export
+        run: |
+          cd ogex/pkg
+          # Add Regex, Match, Error as aliases for JsRegex, JsMatch, JsError
+          # The nodejs target uses CommonJS
+          node -e "
+            const fs = require('fs');
+            let js = fs.readFileSync('ogex.js', 'utf8');
+            // Add Regex alias
+            js = js.replace(
+              'exports.JsRegex = JsRegex;',
+              'exports.JsRegex = JsRegex;\\nexports.Regex = JsRegex;'
+            );
+            // Add Match alias
+            js = js.replace(
+              'exports.JsMatch = JsMatch;',
+              'exports.JsMatch = JsMatch;\\nexports.Match = JsMatch;'
+            );
+            // Add Error alias
+            js = js.replace(
+              'exports.JsError = JsError;',
+              'exports.JsError = JsError;\\nexports.Error = JsError;'
+            );
+            fs.writeFileSync('ogex.js', js);
+          "
+
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@v4
         with:
