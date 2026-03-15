@@ -19,6 +19,7 @@ console_error_panic_hook = { version = "0.1.7", optional = true }
 
 [features]
 default = []
+std = []
 wasm = ["wasm-bindgen", "js-sys", "console_error_panic_hook"]
 
 [lib]
