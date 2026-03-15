@@ -2,6 +2,11 @@ name: Release (Dry Run)
 
 on:
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to pull release notes from (optional)'
+        required: false
+        default: ''
   push:
     branches:
       - 0.1.1
