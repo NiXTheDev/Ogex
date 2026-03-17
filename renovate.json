@@ -19,7 +19,6 @@
       "groupName": "rust minor and patch dependencies",
       "groupSlug": "rust-minor-patch",
       "labels": ["dependencies", "rust"],
-      "rangeStrategy": "update-lockfile",
       "automerge": true,
       "automergeType": "pr"
     },
@@ -28,8 +27,7 @@
       "matchUpdateTypes": ["major"],
       "groupName": "rust major dependencies",
       "groupSlug": "rust-major",
-      "labels": ["dependencies", "rust", "major"],
-      "rangeStrategy": "bump"
+      "labels": ["dependencies", "rust", "major"]
     },
     {
       "matchManagers": ["github-actions"],
