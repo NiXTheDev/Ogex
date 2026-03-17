@@ -3,6 +3,11 @@
   "extends": [
     "config:recommended"
   ],
+  "baseBranchPatterns": [
+    "+([0-9]).+([0-9]).+([0-9])",
+    "+([0-9]).+([0-9]).+([0-9])-*",
+    "!release"
+  ],
   "schedule": ["before 6am on monday"],
   "timezone": "UTC",
   "commitMessagePrefix": "deps:",
