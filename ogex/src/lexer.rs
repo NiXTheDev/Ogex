@@ -3,7 +3,26 @@
 //! This module provides a tokenizer that converts regex pattern strings
 //! into a stream of tokens for parsing.
 
+// Re-export Span from error module to avoid duplication
+pub use crate::error::Span;
+
 use std::fmt;
+
+/// A token with its span in the input
+#[derive(Debug, Clone, PartialEq)]
+pub struct Spanned<T> {
+    /// The token value
+    pub token: T,
+    /// The span of the token in the input
+    pub span: Span,
+}
+
+impl<T> Spanned<T> {
+    /// Create a new spanned token
+    pub fn new(token: T, span: Span) -> Self {
+        Spanned { token, span }
+    }
+}
 
 /// A token in a regex pattern
 #[derive(Debug, Clone, PartialEq)]
@@ -42,9 +61,20 @@ pub enum Token {
     PlusLazy,
     /// Question `?` (optional)
     Question,
-    /// Non-capturing group marker `(?:`
     NonCapturing,
-    /// A named group identifier (the name part in `(name:...)`)
+    /// Lookahead assertion `(@>:pattern)`
+    Lookahead,
+    /// Negative lookahead assertion `(@>~:pattern)`
+    NegativeLookahead,
+    /// Lookbehind assertion `(@<:pattern)`
+    Lookbehind,
+    /// Negative lookbehind assertion `(@<~:pattern)`
+    NegativeLookbehind,
+    /// Atomic group `(@*:pattern)`
+    Atomic,
+    Conditional,
+    /// Mode flags for pattern modification (e.g., @i:pattern)
+    ModeFlags(String),
     NamedGroupStart(String),
     /// An escaped character (e.g., \n, \t, \\, etc.)
     Escape(char),
@@ -98,6 +128,13 @@ impl fmt::Display for Token {
             Token::PlusLazy => write!(f, "`+?`"),
             Token::Question => write!(f, "`?`"),
             Token::NonCapturing => write!(f, "`?:`"),
+            Token::Lookahead => write!(f, "`@>:`"),
+            Token::NegativeLookahead => write!(f, "`@>~:`"),
+            Token::Lookbehind => write!(f, "`@<:`"),
+            Token::NegativeLookbehind => write!(f, "`@<~:`"),
+            Token::Atomic => write!(f, "`@*:`"),
+            Token::Conditional => write!(f, "`@%:`"),
+            Token::ModeFlags(flags) => write!(f, "mode flags `@{}:`", flags),
             Token::NamedGroupStart(name) => write!(f, "named group `{}`", name),
             Token::Escape(c) => write!(f, "escape `\\{}`", c),
             Token::BackrefNumber(n) => write!(f, "backref `\\{}`", n),
@@ -274,9 +311,280 @@ impl<'a> Lexer<'a> {
                 // Look ahead to check if this is a named group or non-capturing
                 let start_pos = self.position;
                 self.advance(); // consume '('
+                // Check for mode flags directly: (@i:pattern), (@im:pattern), etc.
+                if self.current_char == Some('@') {
+                    self.advance(); // consume '@'
+
+                    // Parse mode flags (i, m, s, x in any combination)
+                    let mut mode_flags = String::new();
+                    while let Some(c) = self.current_char {
+                        match c {
+                            'i' | 'm' | 's' | 'x' => {
+                                mode_flags.push(c);
+                                self.advance();
+                            }
+                            _ => break,
+                        }
+                    }
+
+                    // If we have mode flags and next char is ':', return ModeFlags
+                    if !mode_flags.is_empty() && self.current_char == Some(':') {
+                        self.advance(); // consume ':'
+                        return Token::ModeFlags(mode_flags);
+                    }
+
+                    // Not valid mode flags syntax, reset
+                    // (let the normal ? handling take over)
+                    self.position = start_pos;
+                    self.current_char = Some('(');
+                    self.advance();
+                }
 
                 if self.current_char == Some('?') {
                     self.advance(); // consume '?'
+
+                    // Check for legacy named groups: (?P<name>...) or (?<name>...)
+                    if self.current_char == Some('P') {
+                        // (?P<name>...) - Python style named group
+                        self.advance(); // consume 'P'
+                        if self.current_char == Some('<') {
+                            self.advance(); // consume '<'
+                            let name = self.read_identifier();
+                            if self.current_char == Some('>') {
+                                self.advance(); // consume '>'
+                                // Python style: (?P<name>pattern) - no colon needed
+                                // After consuming '>', we're at the start of pattern
+                                return Token::NamedGroupStart(name);
+                            }
+                        }
+                        // Invalid (?P...) syntax, reset
+                        self.position = start_pos;
+                        self.current_char = Some('(');
+                        self.advance();
+                        return Token::LeftParen;
+                    } else if self.current_char == Some('<') {
+                        // (?<name>...) - PCRE style named group
+                        self.advance(); // consume '<'
+                        let name = self.read_identifier();
+                        if self.current_char == Some('>') {
+                            self.advance(); // consume '>'
+                            // PCRE style: (?<name>pattern) - no colon needed
+                            // After consuming '>', we're at the start of pattern
+                            return Token::NamedGroupStart(name);
+                        }
+                        // Invalid (?<...) syntax, reset
+                        self.position = start_pos;
+                        self.current_char = Some('(');
+                        self.advance();
+                        return Token::LeftParen;
+                    }
+
+                    // Parse mode flags (i, m, s, x in any combination)
+                    let mut mode_flags = String::new();
+                    while let Some(c) = self.current_char {
+                        match c {
+                            'i' | 'm' | 's' | 'x' => {
+                                mode_flags.push(c);
+                                self.advance();
+                            }
+                            _ => break,
+                        }
+                    }
+
+                    // If we have mode flags and next char is ':', return ModeFlags
+                    if !mode_flags.is_empty() && self.current_char == Some(':') {
+                        self.advance(); // consume ':'
+                        return Token::ModeFlags(mode_flags);
+                    }
+
+                    // Not valid mode flags syntax, reset
+                    // (let the normal ? handling take over)
+                    self.position = start_pos;
+                    self.current_char = Some('(');
+                    self.advance();
+                }
+
+                // Handle (?...) or (@...) or lookarounds directly (>:pattern) or (<:pattern)
+                if self.current_char == Some('?')
+                    || self.current_char == Some('@')
+                    || self.current_char == Some('>')
+                    || self.current_char == Some('<')
+                {
+                    // Handle lookarounds without @ or ?
+                    // (>:pattern), (>~:pattern), (<:pattern), (<~:pattern)
+                    if self.current_char == Some('>') || self.current_char == Some('<') {
+                        let modifier = match self.current_char {
+                            Some('>') => {
+                                self.advance(); // consume '>'
+                                // Check for negation ~ after >
+                                if self.current_char == Some('~') {
+                                    self.advance(); // consume ~
+                                    "~l" // Negative lookahead
+                                } else {
+                                    ">l" // Positive lookahead
+                                }
+                            }
+                            Some('<') => {
+                                self.advance(); // consume '<'
+                                // Check for negation ~ after <
+                                if self.current_char == Some('~') {
+                                    self.advance(); // consume ~
+                                    "~b" // Negative lookbehind
+                                } else {
+                                    "<b" // Positive lookbehind
+                                }
+                            }
+                            _ => "", // shouldn't happen
+                        };
+                        // Expect colon after modifier
+                        if self.current_char == Some(':') {
+                            self.advance(); // consume ':'
+                            let modifier_str: &str = modifier;
+                            return match modifier_str {
+                                ">l" => Token::Lookahead,
+                                "~l" => Token::NegativeLookahead,
+                                "<b" => Token::Lookbehind,
+                                "~b" => Token::NegativeLookbehind,
+                                _ => {
+                                    // Not a lookaround, reset
+                                    self.position = start_pos;
+                                    self.current_char = Some('(');
+                                    self.advance();
+                                    Token::LeftParen
+                                }
+                            };
+                        }
+                    }
+
+                    // Handle (?...) or (@...) syntax
+                    // If @, don't consume yet - handle in modifier matching
+                    if self.current_char == Some('@') {
+                        // Will be consumed in modifier matching
+                    } else {
+                        // Check if next char is P or < before consuming ?
+                        let next_is_special = matches!(
+                            self.input.chars().nth(self.position + 1),
+                            Some('P') | Some('<')
+                        );
+                        if !next_is_special {
+                            self.advance(); // consume '?'
+                        }
+                    }
+                    // Check for @ modifier (e.g., (@>:pattern))
+                    if self.current_char == Some('@') {
+                        self.advance(); // consume '@'
+                        let modifier = match self.current_char {
+                            Some('>') => {
+                                self.advance(); // consume '>'
+                                // Check for negation ~ after >
+                                if self.current_char == Some('~') {
+                                    self.advance(); // consume ~
+                                    "~l" // Negative lookahead
+                                } else {
+                                    ">l" // Positive lookahead
+                                }
+                            }
+                            Some('<') => {
+                                self.advance(); // consume '<'
+                                // Check for negation ~ after <
+                                if self.current_char == Some('~') {
+                                    self.advance(); // consume ~
+                                    "~b" // Negative lookbehind
+                                } else {
+                                    "<b" // Positive lookbehind
+                                }
+                            }
+                            Some('*') => {
+                                self.advance(); // consume '*'
+                                "*"
+                            }
+                            Some('%') => {
+                                self.advance(); // consume '%'
+                                "%"
+                            }
+                            Some('?') => {
+                                // (@?:pattern) is non-capturing group, but could also be (?P<...> or (?<...
+                                self.advance(); // consume '?'
+                                // Check what follows the ?
+                                if self.current_char == Some(':') {
+                                    // (@?:pattern) - non-capturing group
+                                    self.advance(); // consume ':'
+                                    return Token::NonCapturing;
+                                } else if self.current_char == Some('P') {
+                                    // (?P<name>:...) - Python style named group
+                                    self.advance(); // consume P
+                                    if self.current_char == Some('<') {
+                                        self.advance(); // consume <
+                                        let name = self.read_identifier();
+                                        if self.current_char == Some('>') {
+                                            self.advance(); // consume >
+                                            if self.current_char == Some(':') {
+                                                self.advance(); // consume :
+                                                return Token::NamedGroupStart(name);
+                                            }
+                                        }
+                                    }
+                                    // Invalid, reset
+                                    self.position = start_pos;
+                                    self.current_char = Some('(');
+                                    self.advance();
+                                    return Token::LeftParen;
+                                } else if self.current_char == Some('<') {
+                                    // (?<name>:...) - PCRE style named group
+                                    self.advance(); // consume <
+                                    let name = self.read_identifier();
+                                    if self.current_char == Some('>') {
+                                        self.advance(); // consume >
+                                        if self.current_char == Some(':') {
+                                            self.advance(); // consume :
+                                            return Token::NamedGroupStart(name);
+                                        }
+                                    }
+                                    // Invalid, reset
+                                    self.position = start_pos;
+                                    self.current_char = Some('(');
+                                    self.advance();
+                                    return Token::LeftParen;
+                                }
+                                // Just ? without valid syntax - return non-capturing as fallback
+                                return Token::NonCapturing;
+                            }
+                            Some(':') => {
+                                // (@?:pattern) is equivalent to (?:pattern)
+                                self.advance(); // consume ':'
+                                return Token::NonCapturing;
+                            }
+                            _ => {
+                                // Invalid modifier, reset and return LeftParen
+                                self.position = start_pos;
+                                self.current_char = Some('(');
+                                self.advance();
+                                return Token::LeftParen;
+                            }
+                        };
+                        // Expect colon after modifier
+                        if self.current_char == Some(':') {
+                            self.advance(); // consume ':'
+                            let modifier_str: &str = modifier;
+                            return match modifier_str {
+                                ">l" => Token::Lookahead,
+                                "~l" => Token::NegativeLookahead,
+                                "<b" => Token::Lookbehind,
+                                "~b" => Token::NegativeLookbehind,
+                                "*" => Token::Atomic,
+                                "%" => Token::Conditional,
+                                "?" => Token::NonCapturing,
+                                _ => {
+                                    // This shouldn't happen but handle gracefully
+                                    self.position = start_pos;
+                                    self.current_char = Some('(');
+                                    self.advance();
+                                    Token::LeftParen
+                                }
+                            };
+                        }
+                    }
+
                     if self.current_char == Some(':') {
                         self.advance(); // consume ':'
                         return Token::NonCapturing;
@@ -297,6 +605,17 @@ impl<'a> Lexer<'a> {
                     if self.current_char == Some(':') {
                         self.advance(); // consume the colon
                         return Token::NamedGroupStart(name);
+                    }
+                    // Check for @? after name (named non-capturing group)
+                    else if self.current_char == Some('@') {
+                        self.advance(); // consume @
+                        if self.current_char == Some('?') {
+                            self.advance(); // consume ?
+                            if self.current_char == Some(':') {
+                                self.advance(); // consume :
+                                return Token::NamedGroupStart(name); // named non-capturing
+                            }
+                        }
                     }
                 }
 
@@ -394,6 +713,30 @@ impl<'a> Lexer<'a> {
             tokens.push(token);
         }
         tokens
+    }
+
+    /// Tokenize and return tokens with their spans
+    pub fn tokenize_spanned(&mut self) -> Vec<Spanned<Token>> {
+        let mut tokens = Vec::new();
+        loop {
+            let start = self.position.saturating_sub(1);
+            let token = self.next_token();
+            let end = self.position;
+            if token == Token::Eof {
+                tokens.push(Spanned::new(token, Span::new(start, end)));
+                break;
+            }
+            tokens.push(Spanned::new(token, Span::new(start, end)));
+        }
+        tokens
+    }
+
+    /// Get the next token with its span
+    pub fn next_spanned(&mut self) -> Spanned<Token> {
+        let start = self.position.saturating_sub(1);
+        let token = self.next_token();
+        let end = self.position;
+        Spanned::new(token, Span::new(start, end))
     }
 }
 
@@ -700,5 +1043,29 @@ mod tests {
             tokens,
             vec![Token::BackrefName("1".to_string()), Token::Eof,]
         );
+    }
+
+    #[test]
+    fn test_tokenize_spanned() {
+        let mut lexer = Lexer::new("abc");
+        let tokens = lexer.tokenize_spanned();
+
+        // Should have 4 tokens: 'a', 'b', 'c', EOF
+        assert!(tokens.len() >= 3);
+
+        // Check first token is 'a' literal
+        assert_eq!(tokens[0].token, Token::Literal('a'));
+
+        // Check last token is EOF
+        assert_eq!(tokens[tokens.len() - 1].token, Token::Eof);
+    }
+
+    #[test]
+    fn test_tokenize_spanned_named_group() {
+        let mut lexer = Lexer::new("(name:abc)");
+        let tokens = lexer.tokenize_spanned();
+
+        // First token should be NamedGroupStart
+        assert_eq!(tokens[0].token, Token::NamedGroupStart("name".to_string()));
     }
 }

@@ -1,0 +1,212 @@
+name: Create Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - release
+
+jobs:
+  create-release:
+    # Only run if PR was merged and has 'release' label
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get version from Cargo.toml
+        id: get_version
+        run: |
+          VERSION=$(grep -m1 'version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "Releasing version: $VERSION"
+
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          if git rev-parse "${{ steps.get_version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag already exists"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag does not exist"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Git Tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a "${{ steps.get_version.outputs.tag }}" -m "Release ${{ steps.get_version.outputs.tag }}"
+          git push origin "${{ steps.get_version.outputs.tag }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_version.outputs.tag }}
+          name: "Release ${{ steps.get_version.outputs.tag }}"
+          body: |
+            ## What's New in Ogex ${{ steps.get_version.outputs.version }}
+
+            ### Lookaround Improvements
+            - **Lookbehind support**: Implemented `@<~` (negative lookbehind) and `@<=` (positive lookbehind)
+            - **Optional `@`**: The `@` prefix is now optional in lookaround syntax. Both `(@>:` and `(>:` work now.
+
+            ### Bug Fixes
+            - Fixed lookbehind token mapping in lexer
+            - Added proper Lookbehind/NegativeLookbehind transitions to NFA
+
+            ### Release Infrastructure
+            - Trusted publishing setup for crates.io, npm, and PyPI
+            - Fixed clippy warnings
+            - Improved WASM build (using nodejs target)
+
+            ### Packages
+            - **Rust**: `ogex` v${{ steps.get_version.outputs.version }} on crates.io
+            - **JavaScript/WASM**: `@ogex/ogex` v${{ steps.get_version.outputs.version }} on npm
+            - **Python**: `ogex` v${{ steps.get_version.outputs.version }} on PyPI
+
+            ## Quick Example
+
+            ```javascript
+            import { Regex } from '@ogex/ogex';
+
+            const regex = new Regex('(name:hello)');
+            const match = regex.find('hello world');
+            console.log(match.text);  // "hello"
+            ```
+
+            ```python
+            import ogex
+
+            regex = ogex.Regex(r"(name:\w+) is \g{name}")
+            match = regex.search("John is John")
+            print(match.named_group("name"))  # "John"
+            ```
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment on PR
+        uses: actions/github-script@v8
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🎉 Release **${{ steps.get_version.outputs.tag }}** has been created!\n\n📦 Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ steps.get_version.outputs.tag }}\n\n📦 Published: crates.io, npm (@ogex/ogex), PyPI (ogex)`
+            })
+
+  publish-crates:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    environment: crates.io
+    needs: create-release
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    strategy:
+      matrix:
+        crate: [ogex, ogex-cli]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish to crates.io
+        run: cargo publish -p ${{ matrix.crate }}
+
+  publish-npm:
+    name: Publish to npm (@ogex/ogex)
+    runs-on: ubuntu-latest
+    environment: npm
+    needs: create-release
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install wasm-pack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          wasm-pack --version
+
+      - name: Build WASM
+        run: wasm-pack build ogex --scope ogex --target nodejs --release --features wasm
+
+      - name: Update README with JS/TS examples
+        run: cp ogex/README.wasm.md ogex/pkg/README.md
+
+      - name: Add Regex alias export
+        run: |
+          cd ogex/pkg
+          # Add Regex, Match, Error as aliases for JsRegex, JsMatch, JsError
+          # The nodejs target uses CommonJS
+          node -e "
+            const fs = require('fs');
+            let js = fs.readFileSync('ogex.js', 'utf8');
+            // Add Regex alias
+            js = js.replace(
+              'exports.JsRegex = JsRegex;',
+              'exports.JsRegex = JsRegex;\\nexports.Regex = JsRegex;'
+            );
+            // Add Match alias
+            js = js.replace(
+              'exports.JsMatch = JsMatch;',
+              'exports.JsMatch = JsMatch;\\nexports.Match = JsMatch;'
+            );
+            // Add Error alias
+            js = js.replace(
+              'exports.JsError = JsError;',
+              'exports.JsError = JsError;\\nexports.Error = JsError;'
+            );
+            fs.writeFileSync('ogex.js', js);
+          "
+
+      - name: Publish to npm
+        run: cd ogex/pkg && npm publish --access public
+
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi
+    needs: create-release
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        run: pip install build maturin
+
+      - name: Build and publish
+        run: |
+          cd ogex-python
+          python -m build
+          maturin publish --no-build-hook

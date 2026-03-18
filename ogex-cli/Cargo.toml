@@ -3,7 +3,7 @@ name = "ogex-cli"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-license.workspace = true
+license = "MIT"
 repository.workspace = true
 homepage.workspace = true
 description = "CLI tool for Ogex regex engine"
@@ -13,6 +13,6 @@ name = "ogex"
 path = "src/main.rs"
 
 [dependencies]
-ogex = "0.1"
+ogex = { path = "../ogex" }
 clap = { version = "4.0", features = ["derive"] }
-colored = "2.0"
+colored = "3.1"

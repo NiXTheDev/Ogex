@@ -23,29 +23,40 @@
 //!   escape    := '\' char
 
 use crate::ast::{ClassItem, Expr, Quantifier};
-use crate::error::ParseError;
+use crate::error::{ParseError, Span};
 use crate::lexer::{Lexer, Token};
 
 /// Parser for regex patterns
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current_token: Token,
+    current_span: Span,
 }
 
 impl<'a> Parser<'a> {
     /// Create a new parser for the given input string
     pub fn new(input: &'a str) -> Self {
         let mut lexer = Lexer::new(input);
-        let current_token = lexer.next_token();
+        let spanned = lexer.next_spanned();
+        let current_token = spanned.token;
+        let current_span = spanned.span;
         Parser {
             lexer,
             current_token,
+            current_span,
         }
     }
 
     /// Advance to the next token
     fn advance(&mut self) {
-        self.current_token = self.lexer.next_token();
+        let spanned = self.lexer.next_spanned();
+        self.current_token = spanned.token;
+        self.current_span = spanned.span;
+    }
+
+    /// Get current token's span
+    fn current_span(&self) -> Span {
+        self.current_span
     }
 
     /// Expect a specific token, error if not found
@@ -57,6 +68,7 @@ impl<'a> Parser<'a> {
             Err(ParseError::UnexpectedToken {
                 expected: format!("{:?}", expected),
                 found: self.current_token.to_string(),
+                span: Some(self.current_span()),
             })
         }
     }
@@ -70,6 +82,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::UnexpectedToken {
                 expected: "EOF".to_string(),
                 found: self.current_token.to_string(),
+                span: Some(self.current_span()),
             });
         }
 
@@ -130,10 +143,11 @@ impl<'a> Parser<'a> {
         let atom = self.parse_atom()?;
 
         // Check for quantifier
-        if let Some(quantifier) = self.parse_quantifier()? {
+        if let Some((quantifier, greedy)) = self.parse_quantifier()? {
             Ok(Expr::Quantified {
                 expr: Box::new(atom),
                 quantifier,
+                greedy,
             })
         } else {
             Ok(atom)
@@ -142,27 +156,27 @@ impl<'a> Parser<'a> {
 
     /// Parse a quantifier if present
     /// quantifier := '*' | '+?' | '?' | '{' number (',' number?)? '}' '?'?
-    fn parse_quantifier(&mut self) -> Result<Option<Quantifier>, ParseError> {
+    fn parse_quantifier(&mut self) -> Result<Option<(Quantifier, bool)>, ParseError> {
         match &self.current_token {
             Token::Star => {
                 self.advance();
-                Ok(Some(Quantifier::ZeroOrMore))
+                Ok(Some((Quantifier::ZeroOrMore, true)))
             }
             Token::StarLazy => {
                 self.advance();
-                Ok(Some(Quantifier::ZeroOrMoreLazy))
+                Ok(Some((Quantifier::ZeroOrMore, false)))
             }
             Token::Plus => {
                 self.advance();
-                Ok(Some(Quantifier::OneOrMore))
+                Ok(Some((Quantifier::OneOrMore, true)))
             }
             Token::PlusLazy => {
                 self.advance();
-                Ok(Some(Quantifier::OneOrMoreLazy))
+                Ok(Some((Quantifier::OneOrMore, false)))
             }
             Token::Question => {
                 self.advance();
-                Ok(Some(Quantifier::Optional))
+                Ok(Some((Quantifier::Optional, true)))
             }
             Token::LeftBrace => {
                 self.advance(); // consume '{'
@@ -186,18 +200,14 @@ impl<'a> Parser<'a> {
                 self.expect(Token::RightBrace)?;
 
                 // Check for lazy modifier (?) after {n,m} or {n,}
-                let quantifier = if self.current_token == Token::Question {
+                let greedy = if self.current_token == Token::Question {
                     self.advance();
-                    match quantifier {
-                        Quantifier::AtLeast(n) => Quantifier::AtLeastLazy(n),
-                        Quantifier::Between(n, m) => Quantifier::BetweenLazy(n, m),
-                        _ => quantifier,
-                    }
+                    false // lazy
                 } else {
-                    quantifier
+                    true // greedy (default)
                 };
 
-                Ok(Some(quantifier))
+                Ok(Some((quantifier, greedy)))
             }
             _ => Ok(None),
         }
@@ -223,6 +233,7 @@ impl<'a> Parser<'a> {
             _ => Err(ParseError::UnexpectedToken {
                 expected: "number".to_string(),
                 found: self.current_token.to_string(),
+                span: Some(self.current_span()),
             }),
         }
     }
@@ -320,11 +331,60 @@ impl<'a> Parser<'a> {
                 self.expect(Token::RightParen)?;
                 Ok(Expr::NonCapturingGroup(Box::new(pattern)))
             }
+            Token::Lookahead => {
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::Lookahead(Box::new(pattern)))
+            }
+            Token::NegativeLookahead => {
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::NegativeLookahead(Box::new(pattern)))
+            }
+            Token::Lookbehind => {
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::Lookbehind(Box::new(pattern)))
+            }
+            Token::NegativeLookbehind => {
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::NegativeLookbehind(Box::new(pattern)))
+            }
+            Token::Atomic => {
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::AtomicGroup(Box::new(pattern)))
+            }
+            Token::Conditional => {
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::ConditionalGroup(Box::new(pattern)))
+            }
+            Token::ModeFlags(flags) => {
+                let flags_owned = flags.to_string();
+                self.advance();
+                let pattern = self.parse_alternation()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::ModeFlagsGroup {
+                    flags: flags_owned,
+                    pattern: Box::new(pattern),
+                })
+            }
             Token::LeftBracket => self.parse_char_class(),
-            Token::Eof => Err(ParseError::UnexpectedEof),
+            Token::Eof => Err(ParseError::UnexpectedEof {
+                span: Some(self.current_span()),
+            }),
             _ => Err(ParseError::UnexpectedToken {
                 expected: "expression".to_string(),
                 found: self.current_token.to_string(),
+                span: Some(self.current_span()),
             }),
         }
     }
@@ -383,6 +443,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::UnexpectedToken {
                 expected: "character class item".to_string(),
                 found: self.current_token.to_string(),
+                span: Some(self.current_span()),
             });
         }
 
@@ -426,6 +487,7 @@ impl<'a> Parser<'a> {
             _ => Err(ParseError::UnexpectedToken {
                 expected: "character or escape".to_string(),
                 found: self.current_token.to_string(),
+                span: Some(self.current_span()),
             }),
         }
     }
