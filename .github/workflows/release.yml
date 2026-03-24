@@ -106,8 +106,6 @@ jobs:
     environment: crates.io
     needs: create-release
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
-    env:
-      CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
     strategy:
       matrix:
         crate: [ogex, ogex-cli]
@@ -119,9 +117,6 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cargo login
-        run: echo "$CRATES_IO_TOKEN" | cargo login --
-
       - name: Publish to crates.io
         run: cargo publish -p ${{ matrix.crate }}
 
@@ -131,8 +126,6 @@ jobs:
     environment: npm
     needs: create-release
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -191,8 +184,6 @@ jobs:
     environment: pypi
     needs: create-release
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
-    env:
-      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
     steps:
       - name: Checkout code
