@@ -229,4 +229,4 @@ jobs:
         run: |
           cd ogex-python
           python -m build
-          maturin publish --no-build-hook
+          maturin publish
