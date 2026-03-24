@@ -5,17 +5,24 @@ on:
     types: [closed]
     branches:
       - release
+  workflow_dispatch:
+    inputs:
+      skip_release:
+        description: 'Skip release/tag creation, only publish'
+        type: boolean
+        default: false
 
 jobs:
   create-release:
-    # Only run if PR was merged and has 'release' label
-    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    # Run on PR merge with release label, or always on manual trigger
+    if: (github.event_name == 'pull_request' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write
       pull-requests: write
-
+    outputs:
+      should_create: ${{ steps.should_create.outputs.value }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -30,8 +37,18 @@ jobs:
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "Releasing version: $VERSION"
 
+      - name: Check if should create release
+        id: should_create
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.skip_release }}" == "true" ]]; then
+            echo "value=false" >> $GITHUB_OUTPUT
+          else
+            echo "value=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Get PR body for release notes
         id: get_pr
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -52,8 +69,15 @@ jobs:
           PR_BODY_ENCODED=$(base64 -w0 /tmp/pr_body.txt)
           echo "body=$PR_BODY_ENCODED" >> $GITHUB_OUTPUT
 
+      - name: Set default release notes for manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "title=Release ${{ steps.get_version.outputs.tag }}" >> $GITHUB_OUTPUT
+          echo "body=Manual release" >> $GITHUB_OUTPUT
+
       - name: Check if tag exists
         id: check_tag
+        if: steps.should_create.outputs.value == 'true'
         run: |
           if git rev-parse "${{ steps.get_version.outputs.tag }}" >/dev/null 2>&1; then
             echo "Tag already exists"
@@ -64,7 +88,7 @@ jobs:
           fi
 
       - name: Create Git Tag
-        if: steps.check_tag.outputs.exists == 'false'
+        if: steps.should_create.outputs.value == 'true' && steps.check_tag.outputs.exists == 'false'
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
@@ -73,6 +97,7 @@ jobs:
 
       - name: Decode PR body for comment
         id: decode_body
+        if: steps.should_create.outputs.value == 'true'
         run: |
           if [ -n "${{ steps.get_pr.outputs.body }}" ]; then
             DECODED_BODY=$(echo "${{ steps.get_pr.outputs.body }}" | base64 -d)
@@ -84,6 +109,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
+        if: steps.should_create.outputs.value == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.get_version.outputs.tag }}
@@ -96,6 +122,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Comment on PR
+        if: github.event_name == 'pull_request' && steps.should_create.outputs.value == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh pr comment ${{ github.event.pull_request.number }} --body "Release ${{ steps.get_version.outputs.tag }} published to crates.io, npm (@ogex-nu/ogex), PyPI"
@@ -105,7 +132,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: crates.io
     needs: create-release
-    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    if: (github.event_name == 'pull_request' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')) || github.event_name == 'workflow_dispatch'
     strategy:
       matrix:
         crate: [ogex, ogex-cli]
@@ -125,7 +152,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm
     needs: create-release
-    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    if: (github.event_name == 'pull_request' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')) || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout code
@@ -182,7 +209,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     needs: create-release
-    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    if: (github.event_name == 'pull_request' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')) || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout code
