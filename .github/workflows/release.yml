@@ -30,6 +30,28 @@ jobs:
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "Releasing version: $VERSION"
 
+      - name: Get PR body for release notes
+        id: get_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          echo "Fetching PR #$PR_NUMBER..."
+
+          # Get PR title
+          PR_TITLE=$(gh pr view $PR_NUMBER --json title -q '.title')
+          PR_TITLE="${PR_TITLE//$'\n'/\\n}"
+          echo "title=$PR_TITLE" >> $GITHUB_OUTPUT
+
+          # Get PR body - encode to handle newlines
+          PR_BODY=$(gh pr view $PR_NUMBER --json body -q '.body // ""')
+          if [ -z "$PR_BODY" ]; then
+            PR_BODY="No description provided"
+          fi
+          echo "$PR_BODY" > /tmp/pr_body.txt
+          PR_BODY_ENCODED=$(base64 -w0 /tmp/pr_body.txt)
+          echo "body=$PR_BODY_ENCODED" >> $GITHUB_OUTPUT
+
       - name: Check if tag exists
         id: check_tag
         run: |
@@ -49,49 +71,24 @@ jobs:
           git tag -a "${{ steps.get_version.outputs.tag }}" -m "Release ${{ steps.get_version.outputs.tag }}"
           git push origin "${{ steps.get_version.outputs.tag }}"
 
+      - name: Decode PR body for comment
+        id: decode_body
+        run: |
+          if [ -n "${{ steps.get_pr.outputs.body }}" ]; then
+            DECODED_BODY=$(echo "${{ steps.get_pr.outputs.body }}" | base64 -d)
+            # Escape for JSON
+            ESCAPED_BODY=$(echo "$DECODED_BODY" | jq -Rs .)
+            echo "body=$ESCAPED_BODY" >> $GITHUB_OUTPUT
+          else
+            echo 'body=""' >> $GITHUB_OUTPUT
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.get_version.outputs.tag }}
-          name: "Release ${{ steps.get_version.outputs.tag }}"
-          body: |
-            ## What's New in Ogex ${{ steps.get_version.outputs.version }}
-
-            ### Lookaround Improvements
-            - **Lookbehind support**: Implemented `@<~` (negative lookbehind) and `@<=` (positive lookbehind)
-            - **Optional `@`**: The `@` prefix is now optional in lookaround syntax. Both `(@>:` and `(>:` work now.
-
-            ### Bug Fixes
-            - Fixed lookbehind token mapping in lexer
-            - Added proper Lookbehind/NegativeLookbehind transitions to NFA
-
-            ### Release Infrastructure
-            - Trusted publishing setup for crates.io, npm, and PyPI
-            - Fixed clippy warnings
-            - Improved WASM build (using nodejs target)
-
-            ### Packages
-            - **Rust**: `ogex` v${{ steps.get_version.outputs.version }} on crates.io
-            - **JavaScript/WASM**: `@ogex/ogex` v${{ steps.get_version.outputs.version }} on npm
-            - **Python**: `ogex` v${{ steps.get_version.outputs.version }} on PyPI
-
-            ## Quick Example
-
-            ```javascript
-            import { Regex } from '@ogex/ogex';
-
-            const regex = new Regex('(name:hello)');
-            const match = regex.find('hello world');
-            console.log(match.text);  // "hello"
-            ```
-
-            ```python
-            import ogex
-
-            regex = ogex.Regex(r"(name:\w+) is \g{name}")
-            match = regex.search("John is John")
-            print(match.named_group("name"))  # "John"
-            ```
+          name: "${{ steps.get_pr.outputs.title }}"
+          body: "${{ steps.get_pr.outputs.body }}"
           draft: false
           prerelease: false
           generate_release_notes: false
@@ -99,15 +96,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Comment on PR
-        uses: actions/github-script@v8
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `🎉 Release **${{ steps.get_version.outputs.tag }}** has been created!\n\n📦 Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ steps.get_version.outputs.tag }}\n\n📦 Published: crates.io, npm (@ogex/ogex), PyPI (ogex)`
-            })
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment ${{ github.event.pull_request.number }} --body "Release ${{ steps.get_version.outputs.tag }} published to crates.io, npm (@ogex-nu/ogex), PyPI"
 
   publish-crates:
     name: Publish to crates.io
@@ -130,7 +121,7 @@ jobs:
         run: cargo publish -p ${{ matrix.crate }}
 
   publish-npm:
-    name: Publish to npm (@ogex/ogex)
+    name: Publish to npm (@ogex-nu/ogex)
     runs-on: ubuntu-latest
     environment: npm
     needs: create-release
@@ -152,7 +143,7 @@ jobs:
           wasm-pack --version
 
       - name: Build WASM
-        run: wasm-pack build ogex --scope ogex --target nodejs --release --features wasm
+        run: wasm-pack build ogex --scope ogex-nu --target nodejs --release --features wasm
 
       - name: Update README with JS/TS examples
         run: cp ogex/README.wasm.md ogex/pkg/README.md
