@@ -225,8 +225,11 @@ jobs:
       - name: Install dependencies
         run: pip install build maturin
 
-      - name: Build and publish
+      - name: Build wheel
         run: |
           cd ogex-python
-          python -m build
-          maturin publish
+          pip install maturin
+          maturin build --release --out dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
