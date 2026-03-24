@@ -136,7 +136,6 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
-          token: ${{ env.NPM_TOKEN }}
 
       - name: Install wasm-pack
         run: |
