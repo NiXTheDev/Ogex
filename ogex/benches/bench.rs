@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use ogex::Regex;
 
 fn bench_basic_matching(c: &mut Criterion) {

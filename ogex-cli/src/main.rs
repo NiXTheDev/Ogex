@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use ogex::{transpile, transpile_debug, Regex};
+use ogex::{
+    Regex, convert_all, explain, transpile, transpile_debug, transpile_to_ogex, transpile_to_python,
+};
 
 #[derive(Parser)]
 #[command(name = "ogex")]
@@ -23,10 +25,19 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Convert custom syntax to legacy regex syntax
+    /// Convert regex syntax between flavors
     Convert {
-        /// The pattern to convert
-        pattern: String,
+        /// The pattern to convert (optional - shows help if not provided)
+        pattern: Option<String>,
+        /// Convert FROM legacy syntax TO Ogex syntax
+        #[arg(long)]
+        ogex: bool,
+        /// Output as Python syntax: (?P<name>pattern)
+        #[arg(long)]
+        python: bool,
+        /// Output as PCRE syntax: (?<name>pattern)
+        #[arg(long)]
+        pcre: bool,
         /// Show AST debug output
         #[arg(short, long)]
         debug: bool,
@@ -45,6 +56,11 @@ enum Commands {
         /// The input string
         input: String,
     },
+    /// Explain a regex pattern in human-readable format
+    Explain {
+        /// The regex pattern to explain
+        pattern: String,
+    },
 }
 
 fn main() {
@@ -56,9 +72,16 @@ fn main() {
             input,
             verbose,
         } => cmd_test(&pattern, &input, verbose),
-        Commands::Convert { pattern, debug } => cmd_convert(&pattern, debug),
+        Commands::Convert {
+            pattern,
+            ogex,
+            python,
+            pcre,
+            debug,
+        } => cmd_convert(pattern.as_deref(), ogex, python, pcre, debug),
         Commands::Find { pattern, input } => cmd_find(&pattern, &input),
         Commands::Match { pattern, input } => cmd_match(&pattern, &input),
+        Commands::Explain { pattern } => cmd_explain(&pattern),
     }
 }
 
@@ -87,14 +110,16 @@ fn cmd_test(pattern: &str, input: &str, verbose: bool) {
             println!("{}", "Capture groups:".bold());
 
             // Show numbered groups
-            for (idx, (start, end)) in &m.groups {
-                println!(
-                    "  Group {}: {}..{} = {}",
-                    idx,
-                    start,
-                    end,
-                    &input[*start..*end].green()
-                );
+            for (idx, group) in m.groups.iter().enumerate() {
+                if let Some((start, end)) = group {
+                    println!(
+                        "  Group {}: {}..{} = {}",
+                        idx,
+                        start,
+                        end,
+                        &input[*start..*end].green()
+                    );
+                }
             }
 
             // Show named groups
@@ -121,10 +146,38 @@ fn cmd_test(pattern: &str, input: &str, verbose: bool) {
     }
 }
 
-fn cmd_convert(pattern: &str, debug: bool) {
+fn cmd_convert(pattern: Option<&str>, to_ogex: bool, to_python: bool, to_pcre: bool, debug: bool) {
+    // Show help if no pattern provided
+    let pattern = match pattern {
+        Some(p) => p,
+        None => {
+            println!(
+                "{}",
+                "ogex convert - Convert regex syntax between flavors".bold()
+            );
+            println!();
+            println!("Usage:");
+            println!(
+                "  ogex convert \"(name:pattern)\"           Convert to all flavors (default)"
+            );
+            println!("  ogex convert --ogex \"(?<name>p)\"       Convert legacy TO Ogex");
+            println!("  ogex convert --python \"(?P<name>p)\"    Output as Python syntax");
+            println!("  ogex convert --pcre \"(?<name>p)\"       Output as PCRE syntax");
+            println!();
+            println!("Flavors:");
+            println!("  Ogex:   (name:pattern)     - Ogex native syntax");
+            println!("  Python: (?P<name>pattern)  - Python re module syntax");
+            println!("  PCRE:   (?<name>pattern)   - PCRE/.NET syntax");
+            return;
+        }
+    };
+
     println!("{}", "Converting pattern...".bold());
     println!("  Input:  {}", pattern.cyan());
     println!();
+
+    // Determine output mode
+    let show_all = !to_ogex && !to_python && !to_pcre;
 
     if debug {
         match transpile_debug(pattern) {
@@ -136,11 +189,38 @@ fn cmd_convert(pattern: &str, debug: bool) {
                 std::process::exit(1);
             }
         }
-    } else {
-        match transpile(pattern) {
+    } else if show_all {
+        // Show all conversions
+        match convert_all(pattern) {
             Ok(result) => {
-                println!("{}", "Output:".bold());
-                println!("  {}", result.green());
+                result.report();
+            }
+            Err(e) => {
+                eprintln!("{} {}", "Error:".red().bold(), e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        // Show specific conversion
+        let result = if to_ogex {
+            transpile_to_ogex(pattern)
+        } else if to_python {
+            transpile_to_python(pattern)
+        } else {
+            transpile(pattern) // default to PCRE
+        };
+
+        match result {
+            Ok(output) => {
+                let label = if to_ogex {
+                    "Ogex"
+                } else if to_python {
+                    "Python"
+                } else {
+                    "PCRE"
+                };
+                println!("{}:", label.bold());
+                println!("  {}", output.green());
             }
             Err(e) => {
                 eprintln!("{} {}", "Error:".red().bold(), e);
@@ -198,5 +278,17 @@ fn cmd_match(pattern: &str, input: &str) {
     } else {
         println!("{}", "false".red());
         std::process::exit(1);
+    }
+}
+
+fn cmd_explain(pattern: &str) {
+    match explain(pattern) {
+        Ok(result) => {
+            result.explain();
+        }
+        Err(e) => {
+            eprintln!("{} {}", "Error:".red().bold(), e);
+            std::process::exit(1);
+        }
     }
 }

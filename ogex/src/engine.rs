@@ -3,9 +3,50 @@
 //! This module provides the actual regex matching functionality,
 //! including NFA simulation and backreference handling.
 
-use crate::ast::ClassItem;
 use crate::nfa::{Nfa, StateId, Transition};
 use std::collections::HashMap;
+
+/// Dense vector storage for capture groups (index-based for better cache locality)
+/// Index 0 is unused (groups are 1-indexed), so groups[n] gives group n's capture
+type GroupStorage = Vec<Option<(usize, usize)>>;
+
+/// Mode flags for regex matching
+#[derive(Debug, Clone, Default)]
+pub struct ModeFlags {
+    /// Case insensitive matching (@i)
+    pub case_insensitive: bool,
+    /// Multiline mode - ^ and $ match line boundaries (@m)
+    pub multiline: bool,
+    /// Dot matches newline (@s)
+    pub dotall: bool,
+    /// Extended mode - ignore whitespace, allow # comments (@x)
+    pub extended: bool,
+}
+
+impl ModeFlags {
+    /// Parse mode flags from a string like "imsx"
+    pub fn from_string(flags: &str) -> Self {
+        let mut mode = ModeFlags::default();
+        for c in flags.chars() {
+            match c {
+                'i' => mode.case_insensitive = true,
+                'm' => mode.multiline = true,
+                's' => mode.dotall = true,
+                'x' => mode.extended = true,
+                _ => {}
+            }
+        }
+        mode
+    }
+
+    /// Merge with another set of flags (for nested mode flags groups)
+    pub fn merge(&mut self, other: &ModeFlags) {
+        self.case_insensitive = self.case_insensitive || other.case_insensitive;
+        self.multiline = self.multiline || other.multiline;
+        self.dotall = self.dotall || other.dotall;
+        self.extended = self.extended || other.extended;
+    }
+}
 
 /// A match result
 #[derive(Debug, Clone, PartialEq)]
@@ -14,8 +55,9 @@ pub struct Match {
     pub start: usize,
     /// The end position of the match (exclusive)
     pub end: usize,
-    /// Captured groups (index -> (start, end))
-    pub groups: HashMap<u32, (usize, usize)>,
+    /// Captured groups (index-based: groups[n] = Some((start, end)) for group n)
+    /// Index 0 is unused (groups are 1-indexed)
+    pub groups: GroupStorage,
     /// Named captured groups (name -> (start, end))
     pub named_groups: HashMap<String, (usize, usize)>,
 }
@@ -28,7 +70,12 @@ impl Match {
 
     /// Get a capture group by index (1-based)
     pub fn group(&self, n: u32) -> Option<(usize, usize)> {
-        self.groups.get(&n).copied()
+        let idx = n as usize;
+        if idx >= self.groups.len() {
+            None
+        } else {
+            self.groups[idx]
+        }
     }
 
     /// Get a named capture group
@@ -99,63 +146,107 @@ impl Regex {
         let mut simulator = NfaSimulator::new(&self.nfa, input, start);
         simulator.run()
     }
+
+    /// Try to match the pattern at a specific position without trying other positions
+    /// Used for lookahead assertions - checks if pattern matches at current position
+    pub fn try_match_at(&self, input: &str, pos: usize) -> bool {
+        let mut simulator = NfaSimulator::new(&self.nfa, input, pos);
+        simulator.run().is_some()
+    }
 }
 
 /// A state in the NFA simulation that includes capture group information
 #[derive(Debug, Clone)]
 struct SimState {
     state_id: StateId,
-    groups: HashMap<u32, (usize, usize)>,
+    /// Capture groups (index-based, index 0 unused)
+    groups: GroupStorage,
 }
 
 impl SimState {
-    fn new(state_id: StateId) -> Self {
+    /// Create a new state with empty groups (sized for max_groups)
+    fn new(state_id: StateId, max_groups: u32) -> Self {
+        // +1 because groups are 1-indexed, index 0 is unused
         SimState {
             state_id,
-            groups: HashMap::new(),
+            groups: vec![None; max_groups as usize],
         }
     }
 
-    fn with_groups(state_id: StateId, groups: HashMap<u32, (usize, usize)>) -> Self {
+    fn with_groups(state_id: StateId, groups: GroupStorage) -> Self {
         SimState { state_id, groups }
     }
 }
 
 /// NFA simulator for pattern matching
+#[allow(clippy::type_complexity)]
 struct NfaSimulator<'a> {
     nfa: &'a Nfa,
     _input: &'a str,
-    input_chars: Vec<char>,
+    /// Input as bytes for ASCII mode, or as chars for Unicode mode
+    input_bytes: &'a [u8],
+    /// Whether to use ASCII/byte mode (true) or Unicode/char mode (false)
+    ascii_mode: bool,
     start_pos: usize,
+    /// Memoization cache: (state_id, position) -> Option<groups> (Some if can reach accept, None if cannot)
+    memo: HashMap<(StateId, usize), Option<GroupStorage>>,
 }
 
 impl<'a> NfaSimulator<'a> {
     fn new(nfa: &'a Nfa, input: &'a str, start_pos: usize) -> Self {
+        let ascii_mode = nfa.is_ascii_only();
         NfaSimulator {
             nfa,
             _input: input,
-            input_chars: input.chars().collect(),
+            input_bytes: input.as_bytes(),
+            ascii_mode,
             start_pos,
+            memo: HashMap::new(),
         }
     }
 
+    /// Check if the result for a given state and position is memoized
+    fn check_memoized(&self, state_id: StateId, pos: usize) -> Option<Option<GroupStorage>> {
+        self.memo.get(&(state_id, pos)).cloned()
+    }
+
+    /// Store the result in the memoization cache
+    fn store_memoized(&mut self, state_id: StateId, pos: usize, result: Option<GroupStorage>) {
+        self.memo.insert((state_id, pos), result);
+    }
+
+    #[allow(clippy::type_complexity)]
     fn run(&mut self) -> Option<Match> {
+        // Determine input length and get current character/byte
+        let input_len = if self.ascii_mode {
+            self.input_bytes.len()
+        } else {
+            // For Unicode mode, we need char length
+            self._input.chars().count()
+        };
+
         let mut pos = self.start_pos;
-        let mut last_accept: Option<(usize, HashMap<u32, (usize, usize)>)> = None;
+        let mut last_accept: Option<(usize, GroupStorage)> = None;
 
         // Initialize with start state
-        let mut current_states = vec![SimState::new(self.nfa.start)];
+        let mut current_states = vec![SimState::new(self.nfa.start, self.nfa.next_group_id())];
 
         // Apply epsilon closure to start state
         current_states = self.epsilon_closure(&current_states, pos);
 
         // Check if start state is accepting (empty match)
-        if let Some(groups) = self.find_accepting(&current_states) {
-            last_accept = Some((pos, groups));
-        }
+        // Use memoization for each state in the closure
+        current_states = self.memoize_closure(&current_states, pos, &mut last_accept);
 
-        while pos < self.input_chars.len() {
-            let c = self.input_chars[pos];
+        while pos < input_len {
+            let c = if self.ascii_mode {
+                // ASCII mode: use bytes
+                self.input_bytes[pos] as char
+            } else {
+                // Unicode mode: use chars
+                self._input.chars().nth(pos).unwrap_or('\0')
+            };
+
             let (new_states, chars_consumed) = self.step_with_backrefs(&current_states, c, pos);
             current_states = new_states;
 
@@ -165,16 +256,15 @@ impl<'a> NfaSimulator<'a> {
 
             pos += chars_consumed;
 
-            if let Some(groups) = self.find_accepting(&current_states) {
-                last_accept = Some((pos, groups));
-            }
+            // Apply epsilon closure and use memoization
+            current_states = self.epsilon_closure(&current_states, pos);
+            current_states = self.memoize_closure(&current_states, pos, &mut last_accept);
         }
 
         // Try to reach accept state via epsilon transitions (for end anchors)
         current_states = self.epsilon_closure(&current_states, pos);
-        if let Some(groups) = self.find_accepting(&current_states) {
-            last_accept = Some((pos, groups));
-        }
+        // Use memoization for final epsilon closure (result not needed after)
+        self.memoize_closure(&current_states, pos, &mut last_accept);
 
         last_accept.map(|(end, groups)| Match {
             start: self.start_pos,
@@ -182,6 +272,46 @@ impl<'a> NfaSimulator<'a> {
             groups,
             named_groups: HashMap::new(),
         })
+    }
+
+    /// Apply memoization to a closure of states at a position.
+    /// Returns filtered states and updates last_accept if any state leads to accept.
+    #[allow(clippy::type_complexity)]
+    fn memoize_closure(
+        &mut self,
+        states: &[SimState],
+        pos: usize,
+        last_accept: &mut Option<(usize, GroupStorage)>,
+    ) -> Vec<SimState> {
+        let mut result = Vec::new();
+
+        for sim_state in states {
+            // Check memo cache for this state at this position
+            match self.check_memoized(sim_state.state_id, pos) {
+                // Already computed: if it leads to accept, update last_accept
+                Some(Some(groups)) => {
+                    *last_accept = Some((pos, groups));
+                    // Still add the state for continued exploration
+                    result.push(sim_state.clone());
+                }
+                // Already computed: this state cannot lead to accept, skip it
+                Some(None) => {
+                    // Skip this state - we've already proven it can't lead to accept
+                }
+                // Not memoized: need to check if accepting and memoize the result
+                None => {
+                    let can_accept = self.find_accepting(std::slice::from_ref(sim_state));
+                    if let Some(groups) = can_accept.clone() {
+                        *last_accept = Some((pos, groups));
+                    }
+                    // Store result in memo (None if cannot reach accept, Some(groups) if can)
+                    self.store_memoized(sim_state.state_id, pos, can_accept);
+                    result.push(sim_state.clone());
+                }
+            }
+        }
+
+        result
     }
 
     fn step_with_backrefs(
@@ -198,33 +328,71 @@ impl<'a> NfaSimulator<'a> {
                 match transition {
                     Transition::Backref(group_id) => {
                         // Try to match the backreference
-                        if let Some((start, end)) = sim_state.groups.get(group_id) {
-                            let captured: String = self.input_chars[*start..*end].iter().collect();
-                            let remaining: String = self.input_chars[pos..].iter().collect();
-
-                            if remaining.starts_with(&captured) {
-                                let consumed = captured.len().max(1);
-                                let new_state =
-                                    SimState::with_groups(*target, sim_state.groups.clone());
-                                new_states.push(new_state);
-                                chars_consumed = chars_consumed.max(consumed);
+                        let idx = *group_id as usize;
+                        if idx < sim_state.groups.len()
+                            && let Some((start, end)) = sim_state.groups[idx]
+                        {
+                            if self.ascii_mode {
+                                // ASCII mode: use bytes
+                                let captured = &self.input_bytes[start..end];
+                                let remaining = &self.input_bytes[pos..];
+                                if remaining.starts_with(captured) {
+                                    let consumed = captured.len().max(1);
+                                    let new_state =
+                                        SimState::with_groups(*target, sim_state.groups.clone());
+                                    new_states.push(new_state);
+                                    chars_consumed = chars_consumed.max(consumed);
+                                }
+                            } else {
+                                // Unicode mode: use chars
+                                let captured: String =
+                                    self._input.chars().skip(start).take(end - start).collect();
+                                let remaining: String = self._input.chars().skip(pos).collect();
+                                if remaining.starts_with(&captured) {
+                                    let consumed = captured.len().max(1);
+                                    let new_state =
+                                        SimState::with_groups(*target, sim_state.groups.clone());
+                                    new_states.push(new_state);
+                                    chars_consumed = chars_consumed.max(consumed);
+                                }
                             }
                         }
                     }
                     Transition::BackrefRelative(relative) => {
                         // Resolve relative backreference (\g{-n})
-                        if let Some(group_id) = self.nfa.resolve_relative(*relative)
-                            && let Some((start, end)) = sim_state.groups.get(&group_id)
-                        {
-                            let captured: String = self.input_chars[*start..*end].iter().collect();
-                            let remaining: String = self.input_chars[pos..].iter().collect();
-
-                            if remaining.starts_with(&captured) {
-                                let consumed = captured.len().max(1);
-                                let new_state =
-                                    SimState::with_groups(*target, sim_state.groups.clone());
-                                new_states.push(new_state);
-                                chars_consumed = chars_consumed.max(consumed);
+                        if let Some(group_id) = self.nfa.resolve_relative(*relative) {
+                            let idx = group_id as usize;
+                            if idx < sim_state.groups.len()
+                                && let Some((start, end)) = sim_state.groups[idx]
+                            {
+                                if self.ascii_mode {
+                                    // ASCII mode: use bytes
+                                    let captured = &self.input_bytes[start..end];
+                                    let remaining = &self.input_bytes[pos..];
+                                    if remaining.starts_with(captured) {
+                                        let consumed = captured.len().max(1);
+                                        let new_state = SimState::with_groups(
+                                            *target,
+                                            sim_state.groups.clone(),
+                                        );
+                                        new_states.push(new_state);
+                                        chars_consumed = chars_consumed.max(consumed);
+                                    }
+                                } else {
+                                    // Unicode mode: use chars
+                                    let captured: String =
+                                        self._input.chars().skip(start).take(end - start).collect();
+                                    let remaining: String = self._input.chars().skip(pos).collect();
+                                    if remaining.starts_with(&captured) {
+                                        let consumed = captured.len().max(1);
+                                        let new_state = SimState::with_groups(
+                                            *target,
+                                            sim_state.groups.clone(),
+                                        );
+                                        new_states.push(new_state);
+                                        chars_consumed = chars_consumed.max(consumed);
+                                    }
+                                }
                             }
                         }
                     }
@@ -255,26 +423,33 @@ impl<'a> NfaSimulator<'a> {
         _pos: usize,
     ) -> Option<SimState> {
         let matches = match transition {
-            Transition::Char(tc) => *tc == c,
-            Transition::Any => true,
-            Transition::CharClass { negated, items } => {
-                let matched = items.iter().any(|item| match item {
-                    ClassItem::Char(ch) => *ch == c,
-                    ClassItem::Range(start, end) => (*start..=*end).contains(&c),
-                    ClassItem::Shorthand(sh) => match sh {
-                        'd' => c.is_ascii_digit(),
-                        'D' => !c.is_ascii_digit(),
-                        'w' => c.is_ascii_alphanumeric() || c == '_',
-                        'W' => !(c.is_ascii_alphanumeric() || c == '_'),
-                        's' => c.is_ascii_whitespace(),
-                        'S' => !c.is_ascii_whitespace(),
-                        _ => false,
-                    },
-                });
-                if *negated {
-                    !matched
+            Transition::Char(tc) => {
+                if self.nfa.mode_flags.case_insensitive {
+                    tc.eq_ignore_ascii_case(&c)
                 } else {
-                    matched
+                    *tc == c
+                }
+            }
+            Transition::CharClass {
+                negated: _negated,
+                lookup,
+            } => {
+                // O(1) lookup using pre-computed table (negation already handled in lookup)
+                if c as u32 > 255 {
+                    // For non-ASCII, fall back to simple check
+                    false
+                } else {
+                    let byte_idx = (c as u8 / 8) as usize;
+                    let bit_idx = c as u8 % 8;
+                    (lookup[byte_idx] & (1 << bit_idx)) != 0
+                }
+            }
+            Transition::Any => {
+                // In dotall mode, . matches any character including newline
+                if self.nfa.mode_flags.dotall {
+                    true
+                } else {
+                    c != '\n'
                 }
             }
             _ => false, // Epsilon transitions handled in epsilon_closure
@@ -301,23 +476,71 @@ impl<'a> NfaSimulator<'a> {
 
             closure.push(sim_state.clone());
 
+            // Use pre-computed epsilon closure for pure epsilon transitions
+            let epsilon_targets = self.nfa.get_epsilon_closure(sim_state.state_id);
+            for &target in epsilon_targets {
+                if !closure.iter().any(|s| s.state_id == target) {
+                    stack.push(SimState::with_groups(target, sim_state.groups.clone()));
+                }
+            }
+
+            // Handle position-dependent transitions (anchors, word boundaries, groups)
             for (transition, target) in &self.nfa.states[sim_state.state_id].transitions {
+                // Skip pure epsilon - already handled by pre-computed closure
+                if matches!(transition, Transition::Epsilon) {
+                    continue;
+                }
+
                 if closure.iter().any(|s| s.state_id == *target) {
                     continue;
                 }
 
                 match transition {
-                    Transition::Epsilon => {
-                        stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
-                    }
                     Transition::StartAnchor => {
-                        if self.start_pos == 0 && pos == self.start_pos {
+                        if self.nfa.mode_flags.multiline {
+                            // In multiline mode, ^ matches at start of string or after newline
+                            let is_start = pos == self.start_pos;
+                            let is_after_newline = if self.ascii_mode {
+                                pos > 0 && self.input_bytes[pos - 1] == b'\n'
+                            } else {
+                                pos > 0 && self._input.chars().nth(pos - 1) == Some('\n')
+                            };
+                            if is_start || is_after_newline {
+                                stack
+                                    .push(SimState::with_groups(*target, sim_state.groups.clone()));
+                            }
+                        } else if self.start_pos == 0 && pos == self.start_pos {
                             stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
                         }
                     }
                     Transition::EndAnchor => {
-                        if pos == self.input_chars.len() {
-                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        if self.nfa.mode_flags.multiline {
+                            // In multiline mode, $ matches at end of string or before newline
+                            let input_len = if self.ascii_mode {
+                                self.input_bytes.len()
+                            } else {
+                                self._input.chars().count()
+                            };
+                            let is_end = pos == input_len;
+                            let is_before_newline = if self.ascii_mode {
+                                self.input_bytes.get(pos) == Some(&b'\n')
+                            } else {
+                                self._input.chars().nth(pos) == Some('\n')
+                            };
+                            if is_end || is_before_newline {
+                                stack
+                                    .push(SimState::with_groups(*target, sim_state.groups.clone()));
+                            }
+                        } else {
+                            let input_len = if self.ascii_mode {
+                                self.input_bytes.len()
+                            } else {
+                                self._input.chars().count()
+                            };
+                            if pos == input_len {
+                                stack
+                                    .push(SimState::with_groups(*target, sim_state.groups.clone()));
+                            }
                         }
                     }
                     Transition::WordBoundary => {
@@ -332,15 +555,50 @@ impl<'a> NfaSimulator<'a> {
                     }
                     Transition::GroupStart(group_id) => {
                         let mut new_groups = sim_state.groups.clone();
-                        new_groups.insert(*group_id, (pos, pos)); // Start capturing
+                        let idx = *group_id as usize;
+                        if idx < new_groups.len() {
+                            new_groups[idx] = Some((pos, pos)); // Start capturing
+                        }
                         stack.push(SimState::with_groups(*target, new_groups));
                     }
                     Transition::GroupEnd(group_id) => {
                         let mut new_groups = sim_state.groups.clone();
-                        if let Some((start, _)) = new_groups.get(group_id) {
-                            new_groups.insert(*group_id, (*start, pos)); // End capturing
+                        let idx = *group_id as usize;
+                        if idx < new_groups.len()
+                            && let Some((start, _)) = new_groups[idx]
+                        {
+                            new_groups[idx] = Some((start, pos)); // End capturing
                         }
                         stack.push(SimState::with_groups(*target, new_groups));
+                    }
+                    Transition::Lookahead(inner_nfa) => {
+                        // Check if the inner pattern matches at the current position
+                        // without consuming input (lookahead is zero-width)
+                        if self.check_lookahead(inner_nfa, pos) {
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        }
+                    }
+                    Transition::NegativeLookahead(inner_nfa) => {
+                        // Check if the inner pattern does NOT match at the current position
+                        if !self.check_lookahead(inner_nfa, pos) {
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        }
+                    }
+                    Transition::Lookbehind(inner_nfa) => {
+                        // Check if the inner pattern matches at the position BEFORE current
+                        // (lookbehind checks what comes immediately before current position)
+                        // If at position 0, nothing precedes it, so lookbehind always fails
+                        if self.check_lookbehind(inner_nfa, pos) {
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        }
+                    }
+                    Transition::NegativeLookbehind(inner_nfa) => {
+                        // Check if the inner pattern does NOT match at the position before current
+                        // At position 0, nothing precedes it, so it's NOT preceded by any pattern
+                        // Negative lookbehind succeeds at position 0
+                        if !self.check_lookbehind(inner_nfa, pos) {
+                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
+                        }
                     }
                     _ => {} // Char/CharClass handled in step
                 }
@@ -350,7 +608,7 @@ impl<'a> NfaSimulator<'a> {
         closure
     }
 
-    fn find_accepting(&self, states: &[SimState]) -> Option<HashMap<u32, (usize, usize)>> {
+    fn find_accepting(&self, states: &[SimState]) -> Option<GroupStorage> {
         states
             .iter()
             .find(|s| s.state_id == self.nfa.accept)
@@ -358,14 +616,61 @@ impl<'a> NfaSimulator<'a> {
     }
 
     fn is_word_boundary(&self, pos: usize) -> bool {
-        let left_is_word = pos > 0 && self.is_word_char(self.input_chars[pos - 1]);
-        let right_is_word =
-            pos < self.input_chars.len() && self.is_word_char(self.input_chars[pos]);
+        let (left_is_word, right_is_word) = if self.ascii_mode {
+            // ASCII mode: use bytes
+            let left_is_word = pos > 0 && self.is_word_byte(self.input_bytes[pos - 1]);
+            let right_is_word =
+                pos < self.input_bytes.len() && self.is_word_byte(self.input_bytes[pos]);
+            (left_is_word, right_is_word)
+        } else {
+            // Unicode mode: use chars
+            let left_is_word =
+                pos > 0 && self.is_word_char(self._input.chars().nth(pos - 1).unwrap_or('\0'));
+            let right_is_word = pos < self._input.chars().count()
+                && self.is_word_char(self._input.chars().nth(pos).unwrap_or('\0'));
+            (left_is_word, right_is_word)
+        };
         left_is_word != right_is_word
+    }
+
+    fn is_word_byte(&self, b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_'
     }
 
     fn is_word_char(&self, c: char) -> bool {
         c.is_ascii_alphanumeric() || c == '_'
+    }
+
+    /// Check if an inner NFA matches at a specific position without consuming input
+    /// Used for lookahead assertions
+    fn check_lookahead(&self, inner_nfa: &Nfa, pos: usize) -> bool {
+        // Create a regex from the inner NFA and try to match at the position
+        let regex = Regex {
+            nfa: inner_nfa.clone(),
+        };
+        // Use try_match_at to check if pattern matches without consuming beyond
+        regex.try_match_at(self._input, pos)
+    }
+
+    /// Check if an inner NFA matches immediately BEFORE a specific position
+    /// Used for lookbehind assertions
+    fn check_lookbehind(&self, inner_nfa: &Nfa, pos: usize) -> bool {
+        // For lookbehind, we need to check if the pattern matches immediately before pos
+        // That means the pattern should match ending at pos-1
+        let regex = Regex {
+            nfa: inner_nfa.clone(),
+        };
+        // Try to find a match that ends exactly at pos
+        // We check all possible starting positions from 0 to pos
+        for start in 0..=pos {
+            if let Some(m) = regex.match_from(self._input, start) {
+                // Check if this match ends exactly at pos (i.e., immediately before current pos)
+                if m.end == pos {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 

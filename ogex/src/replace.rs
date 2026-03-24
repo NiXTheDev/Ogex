@@ -4,6 +4,19 @@
 //! like \g{name} or \g{1}, as well as special references:
 //! - `\G` for the entire match
 //! - `\g{0}` for the entire match (deprecated, use `\G` instead)
+//!
+//! # Example
+//!
+//! ```ignore
+//! use ogex::Replacement;
+//!
+//! // Parse a replacement string with backreferences
+//! let repl = Replacement::parse(r"[$1]").unwrap();
+//!
+//! // Apply to a match (start=0, end=5, groups=[(0,5)] for group 1)
+//! let result = repl.apply("hello", 0, 5, &[(0, 5)]);
+//! assert_eq!(result, "[hello]");
+//! ```
 
 use std::collections::HashMap;
 
@@ -171,9 +184,9 @@ impl Replacement {
                     if let Some(&group_index) = named_groups.get(name)
                         && let Some(&(start, end)) =
                             groups.get((group_index as usize).saturating_sub(1))
-                        {
-                            result.push_str(&original[start..end]);
-                        }
+                    {
+                        result.push_str(&original[start..end]);
+                    }
                     // If named group doesn't exist, replace with empty string
                 }
                 ReplacementPart::EntireMatch => {

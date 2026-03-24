@@ -1,0 +1,145 @@
+name: Release (Dry Run)
+
+on:
+  push:
+    branches:
+      - 0.1.1
+
+jobs:
+  dry-run:
+    name: Dry Run Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Get version
+        id: get_version
+        run: |
+          VERSION=$(grep -m1 'version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "Dry run version: $VERSION"
+
+      - name: Get PR info
+        id: get_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get PR with Release label - get first one
+          PR_JSON=$(gh pr list --repo ${{ github.repository }} --label Release --limit 1 --json number,title,body 2>/dev/null)
+
+          if [ -z "$PR_JSON" ] || [ "$PR_JSON" = "[]" ]; then
+            echo "No PR with Release label found"
+            echo "pr_number=" >> $GITHUB_OUTPUT
+            echo "title=" >> $GITHUB_OUTPUT
+            echo "body=" >> $GITHUB_OUTPUT
+          else
+            PR_NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number')
+            echo "Found PR #$PR_NUMBER"
+            echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+            # Get PR title - escape for GITHUB_OUTPUT
+            PR_TITLE=$(echo "$PR_JSON" | jq -r '.[0].title // "Release"')
+            PR_TITLE="${PR_TITLE//$'\n'/\\n}"
+            PR_TITLE="${PR_TITLE//$'\r'/\\r}"
+            echo "title=$PR_TITLE" >> $GITHUB_OUTPUT
+
+            # Get PR body - escape for GITHUB_OUTPUT (use delimeter to avoid issues)
+            PR_BODY=$(echo "$PR_JSON" | jq -r '.[0].body // "No description provided"')
+            # Write body to temp file and process
+            echo "$PR_BODY" > /tmp/pr_body.txt
+            # Use cat with base64 encoding to handle newlines safely
+            PR_BODY_ENCODED=$(base64 -w0 /tmp/pr_body.txt)
+            echo "body=$PR_BODY_ENCODED" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          TAG="${{ steps.get_version.outputs.tag }}"
+
+          if [ -n "${{ steps.get_pr.outputs.pr_number }}" ]; then
+            # Use PR title as release name
+            RELEASE_NAME="${{ steps.get_pr.outputs.title }}"
+            # Use PR body (decode from base64)
+            if [ -n "${{ steps.get_pr.outputs.body }}" ]; then
+              RELEASE_BODY=$(echo "${{ steps.get_pr.outputs.body }}" | base64 -d)
+            else
+              RELEASE_BODY="No description provided"
+            fi
+          else
+            # Default release notes
+            RELEASE_NAME="Release $TAG"
+            RELEASE_BODY="See CHANGELOG.md for full release notes."
+          fi
+
+          # Escape for GITHUB_OUTPUT
+          RELEASE_NAME="${RELEASE_NAME//$'\n'/\\n}"
+          RELEASE_BODY="${RELEASE_BODY//$'\n'/\\n}"
+
+          echo "name=$RELEASE_NAME" >> $GITHUB_OUTPUT
+          echo "body=$RELEASE_BODY" >> $GITHUB_OUTPUT
+
+      - name: Simulate crate builds
+        run: |
+          echo "=== DRY RUN: Would build crates ==="
+          echo "- ogex (publish to crates.io)"
+          echo "- ogex-cli (publish to crates.io)"
+          echo "- ogex-python (skip - no publish)"
+
+      - name: Simulate npm publish
+        run: |
+          echo "=== DRY RUN: Would publish to npm ==="
+          echo "- Package: @ogex/ogex@${{ steps.get_version.outputs.version }}"
+          echo "- Scope: ogex"
+          echo "- Target: nodejs"
+          echo "- Files: ogex_bg.wasm, ogex.js, ogex_bg.js, ogex.d.ts"
+
+      - name: Simulate PyPI publish
+        run: |
+          echo "=== DRY RUN: Would publish to PyPI ==="
+          echo "- Package: ogex-python"
+          echo "- Version: ${{ steps.get_version.outputs.version }}"
+          echo "- Python: 3.14"
+
+      - name: Simulate GitHub Release
+        run: |
+          echo "=== DRY RUN: Would create GitHub Release ==="
+          echo "- Tag: ${{ steps.get_version.outputs.tag }}"
+          echo "- Name: ${{ steps.release_notes.outputs.name }}"
+          echo "- Body preview:"
+          echo "${{ steps.release_notes.outputs.body }}"
+
+      - name: Simulate Git Tag
+        run: |
+          echo "=== DRY RUN: Would create Git Tag ==="
+          echo "- Tag: ${{ steps.get_version.outputs.tag }}"
+          echo "- Message: Release ${{ steps.get_version.outputs.tag }}"
+
+      - name: Summary
+        run: |
+          echo "## Dry Run Summary"
+          echo ""
+          echo "| Step | Status |"
+          echo "|------|--------|"
+          echo "| GitHub Release | Would create |"
+          echo "| Git Tag | Would create |"
+          echo "| crates.io (ogex) | Would publish |"
+          echo "| crates.io (ogex-cli) | Would publish |"
+          echo "| npm (@ogex/ogex) | Would publish |"
+          echo "| PyPI (ogex) | Would publish |"
+          echo ""
+          if [ -n "${{ github.event.inputs.pr_number }}" ]; then
+            echo "**Source PR: #${{ github.event.inputs.pr_number }}**"
+          else
+            echo "**Source: Default template (no PR specified)**"
+          fi
+          echo ""
+          echo "**This was a dry run. No actual changes were made.**"

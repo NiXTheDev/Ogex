@@ -3,14 +3,16 @@
 //! This module implements Thompson's construction algorithm to build an NFA
 //! from a regex AST, and provides NFA simulation for pattern matching.
 
-use crate::ast::{ClassItem, Expr, Quantifier};
+use crate::ast::{CharacterClass, ClassItem, Expr, Quantifier};
 use std::collections::{HashMap, HashSet};
+
+use crate::engine::ModeFlags;
 
 /// An NFA state ID
 pub type StateId = usize;
 
 /// A transition in the NFA
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Transition {
     /// Transition on a specific character
     Char(char),
@@ -18,10 +20,12 @@ pub enum Transition {
     Any,
     /// Epsilon transition (no input consumed)
     Epsilon,
-    /// Transition matching a character class
+    /// Transition matching a character class with pre-computed lookup table
     CharClass {
+        /// Pre-computed lookup table for O(1) matching
+        lookup: [u8; 32],
+        /// Whether the class is negated
         negated: bool,
-        items: Vec<ClassItem>,
     },
     /// Start of a capture group
     GroupStart(u32),
@@ -40,6 +44,18 @@ pub enum Transition {
     WordBoundary,
     /// Non-word boundary assertion
     NonWordBoundary,
+    /// Positive lookahead assertion (@>:pattern)
+    /// Contains the compiled NFA for the inner pattern
+    Lookahead(Nfa),
+    /// Negative lookahead assertion (@>~:pattern)
+    /// Contains the compiled NFA for the inner pattern
+    NegativeLookahead(Nfa),
+    /// Positive lookbehind assertion (@<:pattern)
+    /// Contains the compiled NFA for the inner pattern
+    Lookbehind(Nfa),
+    /// Negative lookbehind assertion (@<~:pattern)
+    /// Contains the compiled NFA for the inner pattern
+    NegativeLookbehind(Nfa),
 }
 
 /// An NFA state
@@ -61,7 +77,7 @@ impl State {
 }
 
 /// An NFA (Nondeterministic Finite Automaton)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Nfa {
     /// All states in the NFA
     pub states: Vec<State>,
@@ -78,6 +94,11 @@ pub struct Nfa {
     /// List of numbered (non-named) group indices, in order of appearance
     /// Used for relative backreference resolution
     numbered_groups: Vec<u32>,
+    /// Mode flags for regex matching
+    pub mode_flags: ModeFlags,
+    /// Pre-computed epsilon closure for each state
+    /// epsilon_closure[state_id] = all states reachable from state_id via epsilon transitions
+    epsilon_closure: Vec<Vec<StateId>>,
 }
 
 impl Nfa {
@@ -91,6 +112,8 @@ impl Nfa {
             next_group_id: 1, // Group 0 is the entire match
             named_groups: HashMap::new(),
             numbered_groups: Vec::new(),
+            mode_flags: ModeFlags::default(),
+            epsilon_closure: Vec::new(),
         }
     }
 
@@ -114,7 +137,50 @@ impl Nfa {
         nfa.start = start;
         nfa.accept = accept;
         nfa.states[accept].is_accepting = true;
+
+        // Pre-compute epsilon closures for all states
+        nfa.compute_epsilon_closures();
+
         nfa
+    }
+
+    /// Pre-compute epsilon closure for each state
+    fn compute_epsilon_closures(&mut self) {
+        let num_states = self.states.len();
+        self.epsilon_closure = Vec::with_capacity(num_states);
+
+        for state_id in 0..num_states {
+            let closure = self.compute_single_epsilon_closure(state_id);
+            self.epsilon_closure.push(closure);
+        }
+    }
+
+    /// Compute epsilon closure for a single state (all states reachable via epsilon transitions)
+    fn compute_single_epsilon_closure(&self, state_id: StateId) -> Vec<StateId> {
+        let mut closure = Vec::new();
+        let mut stack = vec![state_id];
+
+        while let Some(s) = stack.pop() {
+            if closure.contains(&s) {
+                continue;
+            }
+            closure.push(s);
+
+            // Follow epsilon transitions
+            for (transition, target) in &self.states[s].transitions {
+                if matches!(transition, Transition::Epsilon) && !closure.contains(target) {
+                    stack.push(*target);
+                }
+            }
+        }
+
+        closure
+    }
+
+    /// Get the pre-computed epsilon closure for a state
+    #[inline]
+    pub fn get_epsilon_closure(&self, state_id: StateId) -> &[StateId] {
+        &self.epsilon_closure[state_id]
     }
 
     /// Compile an expression and return (start, accept) state IDs
@@ -126,10 +192,22 @@ impl Nfa {
             Expr::Sequence(exprs) => self.compile_sequence(exprs),
             Expr::Alternation(exprs) => self.compile_alternation(exprs),
             Expr::CharacterClass(cc) => self.compile_char_class(cc.negated, &cc.items),
-            Expr::Quantified { expr, quantifier } => self.compile_quantified(expr, *quantifier),
+            Expr::Quantified {
+                expr,
+                quantifier,
+                greedy,
+            } => self.compile_quantified(expr, *quantifier, *greedy),
             Expr::Group(expr) => self.compile_group(expr, None),
             Expr::NonCapturingGroup(expr) => self.compile_expr(expr),
             Expr::NamedGroup { name, pattern } => self.compile_group(pattern, Some(name.clone())),
+            Expr::AtomicGroup(expr) => self.compile_expr(expr),
+            Expr::ConditionalGroup(expr) => self.compile_expr(expr),
+            Expr::ModeFlagsGroup { flags, pattern } => {
+                // Parse the flags and merge into NFA's mode_flags
+                let parsed_flags = ModeFlags::from_string(flags);
+                self.mode_flags.merge(&parsed_flags);
+                self.compile_expr(pattern)
+            }
             Expr::StartAnchor => self.compile_start_anchor(),
             Expr::EndAnchor => self.compile_end_anchor(),
             Expr::Backreference(n) => self.compile_backref(*n),
@@ -146,7 +224,53 @@ impl Nfa {
             Expr::Shorthand(c) => self.compile_shorthand(*c),
             Expr::WordBoundary => self.compile_word_boundary(false),
             Expr::NonWordBoundary => self.compile_word_boundary(true),
+            Expr::Lookahead(expr) => self.compile_lookahead(expr, true),
+            Expr::NegativeLookahead(expr) => self.compile_lookahead(expr, false),
+            Expr::Lookbehind(expr) => self.compile_lookbehind(expr, true),
+            Expr::NegativeLookbehind(expr) => self.compile_lookbehind(expr, false),
         }
+    }
+
+    /// Compile a lookahead assertion
+    ///
+    /// # Arguments
+    /// * `expr` - The inner pattern to match
+    /// * `positive` - If true, positive lookahead (@>:), if false, negative lookahead (@>~:)
+    fn compile_lookahead(&mut self, expr: &Expr, positive: bool) -> (StateId, StateId) {
+        // Compile the inner pattern into a separate NFA
+        let inner_nfa = Nfa::from_expr(expr);
+
+        let start = self.new_state();
+        let accept = self.new_state();
+
+        if positive {
+            self.add_transition(start, Transition::Lookahead(inner_nfa), accept);
+        } else {
+            self.add_transition(start, Transition::NegativeLookahead(inner_nfa), accept);
+        }
+
+        (start, accept)
+    }
+
+    /// Compile a lookbehind assertion
+    ///
+    /// # Arguments
+    /// * `expr` - The inner pattern to match
+    /// * `positive` - If true, positive lookbehind (@<:), if false, negative lookbehind (@<~:)
+    fn compile_lookbehind(&mut self, expr: &Expr, positive: bool) -> (StateId, StateId) {
+        // Compile the inner pattern into a separate NFA
+        let inner_nfa = Nfa::from_expr(expr);
+
+        let start = self.new_state();
+        let accept = self.new_state();
+
+        if positive {
+            self.add_transition(start, Transition::Lookbehind(inner_nfa), accept);
+        } else {
+            self.add_transition(start, Transition::NegativeLookbehind(inner_nfa), accept);
+        }
+
+        (start, accept)
     }
 
     /// Compile an empty expression
@@ -217,53 +341,61 @@ impl Nfa {
         (start, accept)
     }
 
-    /// Compile a character class
+    /// Compile a character class with O(1) lookup table
     fn compile_char_class(&mut self, negated: bool, items: &[ClassItem]) -> (StateId, StateId) {
         let start = self.new_state();
         let accept = self.new_state();
-        self.add_transition(
-            start,
-            Transition::CharClass {
-                negated,
-                items: items.to_vec(),
-            },
-            accept,
-        );
+
+        // Build a temporary CharacterClass to generate the lookup table
+        let cc = CharacterClass {
+            negated,
+            items: items.to_vec(),
+        };
+        let lookup = cc.to_lookup_table();
+
+        self.add_transition(start, Transition::CharClass { lookup, negated }, accept);
         (start, accept)
     }
 
     /// Compile a quantified expression
-    fn compile_quantified(&mut self, expr: &Expr, quantifier: Quantifier) -> (StateId, StateId) {
+    fn compile_quantified(
+        &mut self,
+        expr: &Expr,
+        quantifier: Quantifier,
+        greedy: bool,
+    ) -> (StateId, StateId) {
         let (inner_start, inner_accept) = self.compile_expr(expr);
         let start = self.new_state();
         let accept = self.new_state();
 
         match quantifier {
             Quantifier::ZeroOrMore => {
-                // *: Greedy - prefer to match more
-                self.add_transition(start, Transition::Epsilon, inner_start);
-                self.add_transition(start, Transition::Epsilon, accept);
-                self.add_transition(inner_accept, Transition::Epsilon, inner_start);
-                self.add_transition(inner_accept, Transition::Epsilon, accept);
-            }
-            Quantifier::ZeroOrMoreLazy => {
-                // *?: Lazy - prefer to match less (exit first)
-                self.add_transition(start, Transition::Epsilon, accept);
-                self.add_transition(start, Transition::Epsilon, inner_start);
-                self.add_transition(inner_accept, Transition::Epsilon, accept);
-                self.add_transition(inner_accept, Transition::Epsilon, inner_start);
+                if greedy {
+                    // *: Greedy - prefer to match more
+                    self.add_transition(start, Transition::Epsilon, inner_start);
+                    self.add_transition(start, Transition::Epsilon, accept);
+                    self.add_transition(inner_accept, Transition::Epsilon, inner_start);
+                    self.add_transition(inner_accept, Transition::Epsilon, accept);
+                } else {
+                    // *?: Lazy - prefer to match less (exit first)
+                    self.add_transition(start, Transition::Epsilon, accept);
+                    self.add_transition(start, Transition::Epsilon, inner_start);
+                    self.add_transition(inner_accept, Transition::Epsilon, accept);
+                    self.add_transition(inner_accept, Transition::Epsilon, inner_start);
+                }
             }
             Quantifier::OneOrMore => {
-                // +: Greedy - prefer to match more
-                self.add_transition(start, Transition::Epsilon, inner_start);
-                self.add_transition(inner_accept, Transition::Epsilon, inner_start);
-                self.add_transition(inner_accept, Transition::Epsilon, accept);
-            }
-            Quantifier::OneOrMoreLazy => {
-                // +?: Lazy - prefer to match less
-                self.add_transition(start, Transition::Epsilon, inner_start);
-                self.add_transition(inner_accept, Transition::Epsilon, accept);
-                self.add_transition(inner_accept, Transition::Epsilon, inner_start);
+                if greedy {
+                    // +: Greedy - prefer to match more
+                    self.add_transition(start, Transition::Epsilon, inner_start);
+                    self.add_transition(inner_accept, Transition::Epsilon, inner_start);
+                    self.add_transition(inner_accept, Transition::Epsilon, accept);
+                } else {
+                    // +?: Lazy - prefer to match less
+                    self.add_transition(start, Transition::Epsilon, inner_start);
+                    self.add_transition(inner_accept, Transition::Epsilon, accept);
+                    self.add_transition(inner_accept, Transition::Epsilon, inner_start);
+                }
             }
             Quantifier::Optional => {
                 // ?: Can skip or match once
@@ -272,24 +404,16 @@ impl Nfa {
                 self.add_transition(inner_accept, Transition::Epsilon, accept);
             }
             Quantifier::Exactly(n) => {
-                // {n}: Match exactly n times (no lazy/greedy distinction)
+                // {n}: Match exactly n times
                 return self.compile_repeat_exact(expr, n);
             }
             Quantifier::AtLeast(n) => {
                 // {n,}: Greedy - prefer to match more
-                return self.compile_repeat_at_least(expr, n);
-            }
-            Quantifier::AtLeastLazy(n) => {
-                // {n,}?: Lazy - prefer to match less
-                return self.compile_repeat_at_least_lazy(expr, n);
+                return self.compile_repeat_at_least(expr, n, greedy);
             }
             Quantifier::Between(n, m) => {
                 // {n,m}: Greedy - prefer to match more
-                return self.compile_repeat_between(expr, n, m);
-            }
-            Quantifier::BetweenLazy(n, m) => {
-                // {n,m}?: Lazy - prefer to match less
-                return self.compile_repeat_between_lazy(expr, n, m);
+                return self.compile_repeat_between(expr, n, m, greedy);
             }
         }
 
@@ -323,27 +447,24 @@ impl Nfa {
     }
 
     /// Compile repeat at least n times
-    fn compile_repeat_at_least(&mut self, expr: &Expr, n: u32) -> (StateId, StateId) {
+    fn compile_repeat_at_least(&mut self, expr: &Expr, n: u32, greedy: bool) -> (StateId, StateId) {
         // Match exactly n times, then add a * (zero or more)
         let (exact_start, exact_accept) = self.compile_repeat_exact(expr, n);
-        let (star_start, star_accept) = self.compile_quantified(expr, Quantifier::ZeroOrMore);
-
-        self.add_transition(exact_accept, Transition::Epsilon, star_start);
-        (exact_start, star_accept)
-    }
-
-    /// Compile repeat at least n times (lazy)
-    fn compile_repeat_at_least_lazy(&mut self, expr: &Expr, n: u32) -> (StateId, StateId) {
-        // Match exactly n times, then add a *? (zero or more lazy)
-        let (exact_start, exact_accept) = self.compile_repeat_exact(expr, n);
-        let (star_start, star_accept) = self.compile_quantified(expr, Quantifier::ZeroOrMoreLazy);
+        let (star_start, star_accept) =
+            self.compile_quantified(expr, Quantifier::ZeroOrMore, greedy);
 
         self.add_transition(exact_accept, Transition::Epsilon, star_start);
         (exact_start, star_accept)
     }
 
     /// Compile repeat between n and m times
-    fn compile_repeat_between(&mut self, expr: &Expr, n: u32, m: u32) -> (StateId, StateId) {
+    fn compile_repeat_between(
+        &mut self,
+        expr: &Expr,
+        n: u32,
+        m: u32,
+        greedy: bool,
+    ) -> (StateId, StateId) {
         if n == m {
             return self.compile_repeat_exact(expr, n);
         }
@@ -360,36 +481,15 @@ impl Nfa {
         let mut prev_accept = exact_accept;
         for _ in 0..(m - n) {
             let (s, a) = self.compile_expr(expr);
-            self.add_transition(prev_accept, Transition::Epsilon, s);
-            self.add_transition(prev_accept, Transition::Epsilon, accept);
-            prev_accept = a;
-        }
-
-        self.add_transition(prev_accept, Transition::Epsilon, accept);
-        (start, accept)
-    }
-
-    /// Compile repeat between n and m times (lazy)
-    fn compile_repeat_between_lazy(&mut self, expr: &Expr, n: u32, m: u32) -> (StateId, StateId) {
-        if n == m {
-            return self.compile_repeat_exact(expr, n);
-        }
-
-        // Match exactly n times, then match (m-n) optional times (lazy)
-        let (exact_start, exact_accept) = self.compile_repeat_exact(expr, n);
-
-        let start = self.new_state();
-        let accept = self.new_state();
-
-        self.add_transition(start, Transition::Epsilon, exact_start);
-
-        // Add (m-n) optional matches (lazy order)
-        let mut prev_accept = exact_accept;
-        for _ in 0..(m - n) {
-            let (s, a) = self.compile_expr(expr);
-            // Lazy: try to exit first, then match
-            self.add_transition(prev_accept, Transition::Epsilon, accept);
-            self.add_transition(prev_accept, Transition::Epsilon, s);
+            if greedy {
+                // Greedy: try to match first, then exit
+                self.add_transition(prev_accept, Transition::Epsilon, s);
+                self.add_transition(prev_accept, Transition::Epsilon, accept);
+            } else {
+                // Lazy: try to exit first, then match
+                self.add_transition(prev_accept, Transition::Epsilon, accept);
+                self.add_transition(prev_accept, Transition::Epsilon, s);
+            }
             prev_accept = a;
         }
 
@@ -456,14 +556,16 @@ impl Nfa {
     fn compile_shorthand(&mut self, c: char) -> (StateId, StateId) {
         let start = self.new_state();
         let accept = self.new_state();
-        self.add_transition(
-            start,
-            Transition::CharClass {
-                negated: c.is_ascii_uppercase(), // \W, \D, \S are negated
-                items: vec![crate::ast::ClassItem::Shorthand(c.to_ascii_lowercase())],
-            },
-            accept,
-        );
+
+        // Build lookup table for shorthand character class
+        let negated = c.is_ascii_uppercase(); // \W, \D, \S are negated
+        let cc = CharacterClass {
+            negated,
+            items: vec![ClassItem::Shorthand(c.to_ascii_lowercase())],
+        };
+        let lookup = cc.to_lookup_table();
+
+        self.add_transition(start, Transition::CharClass { lookup, negated }, accept);
         (start, accept)
     }
 
@@ -507,6 +609,12 @@ impl Nfa {
         self.numbered_groups.len()
     }
 
+    /// Get the next group ID to be allocated
+    /// This is also the size needed for group storage vectors (since groups are 1-indexed)
+    pub fn next_group_id(&self) -> u32 {
+        self.next_group_id
+    }
+
     /// Resolve a relative backreference (\g{-n}) to an absolute group index
     ///
     /// # Arguments
@@ -524,6 +632,43 @@ impl Nfa {
         }
         let actual_index = self.numbered_groups.len() - reverse_index;
         Some(self.numbered_groups[actual_index])
+    }
+
+    /// Check if the pattern contains only ASCII characters and no Unicode features
+    ///
+    /// This is used to optimize matching by avoiding UTF-8 decoding when possible.
+    /// A pattern is ASCII-only if:
+    /// - All literal characters are ASCII (0-127)
+    /// - No Unicode shorthand classes (\p, \P) are used (they use ASCII shortcuts \w, \d, \s)
+    /// - Character classes only contain ASCII characters
+    pub fn is_ascii_only(&self) -> bool {
+        // Check all states for non-ASCII transitions
+        for state in &self.states {
+            for (transition, _) in &state.transitions {
+                match transition {
+                    Transition::Char(c) => {
+                        if *c as u32 > 127 {
+                            return false;
+                        }
+                    }
+                    Transition::CharClass { lookup, .. } => {
+                        // Check if lookup table has any bits set for non-ASCII (128-255)
+                        // Bytes 16-31 correspond to characters 128-255
+                        if lookup[16..32].iter().any(|&b| b != 0) {
+                            return false;
+                        }
+                    }
+                    // All other transition types are ASCII-compatible
+                    // - Any (.) works with bytes
+                    // - Anchors work with byte positions
+                    // - Word boundaries work with byte positions
+                    // - Backreferences work with byte slices
+                    // - Epsilon transitions don't depend on character encoding
+                    _ => {}
+                }
+            }
+        }
+        true
     }
 }
 
@@ -563,21 +708,21 @@ mod tests {
 
     #[test]
     fn test_nfa_from_star() {
-        let expr = Expr::quantified(Expr::literal('a'), Quantifier::ZeroOrMore);
+        let expr = Expr::quantified(Expr::literal('a'), Quantifier::ZeroOrMore, true);
         let nfa = Nfa::from_expr(&expr);
         assert!(nfa.states.len() >= 4); // Star requires branch states
     }
 
     #[test]
     fn test_nfa_from_plus() {
-        let expr = Expr::quantified(Expr::literal('a'), Quantifier::OneOrMore);
+        let expr = Expr::quantified(Expr::literal('a'), Quantifier::OneOrMore, true);
         let nfa = Nfa::from_expr(&expr);
         assert!(nfa.states.len() >= 4);
     }
 
     #[test]
     fn test_nfa_from_optional() {
-        let expr = Expr::quantified(Expr::literal('a'), Quantifier::Optional);
+        let expr = Expr::quantified(Expr::literal('a'), Quantifier::Optional, true);
         let nfa = Nfa::from_expr(&expr);
         assert!(nfa.states.len() >= 4);
     }
@@ -619,10 +764,18 @@ mod tests {
             Expr::quantified(
                 Expr::alternation(vec![Expr::literal('a'), Expr::literal('b')]),
                 Quantifier::ZeroOrMore,
+                true,
             ),
             Expr::literal('c'),
         ]);
         let nfa = Nfa::from_expr(&expr);
         assert!(nfa.states.len() >= 8);
+    }
+
+    #[test]
+    fn test_nfa_from_atomic_group() {
+        let expr = Expr::AtomicGroup(Box::new(Expr::literal('a')));
+        let nfa = Nfa::from_expr(&expr);
+        assert!(nfa.states.len() >= 2);
     }
 }
