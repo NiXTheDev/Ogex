@@ -106,6 +106,8 @@ jobs:
     environment: crates.io
     needs: create-release
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    env:
+      CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
     strategy:
       matrix:
         crate: [ogex, ogex-cli]
@@ -118,7 +120,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cargo login
-        run: echo "${{ secrets.CRATES_IO_TOKEN }}" | cargo login --
+        run: echo "$CRATES_IO_TOKEN" | cargo login --
 
       - name: Publish to crates.io
         run: cargo publish -p ${{ matrix.crate }}
@@ -129,6 +131,8 @@ jobs:
     environment: npm
     needs: create-release
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -139,6 +143,7 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+          token: ${{ env.NPM_TOKEN }}
 
       - name: Install wasm-pack
         run: |
@@ -186,6 +191,8 @@ jobs:
     environment: pypi
     needs: create-release
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    env:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
     steps:
       - name: Checkout code
