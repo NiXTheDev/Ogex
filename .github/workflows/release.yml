@@ -117,6 +117,9 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cargo login
+        run: echo "${{ secrets.CRATES_IO_TOKEN }}" | cargo login --
+
       - name: Publish to crates.io
         run: cargo publish -p ${{ matrix.crate }}
 
