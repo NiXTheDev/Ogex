@@ -125,7 +125,7 @@ jobs:
         if: github.event_name == 'pull_request' && steps.should_create.outputs.value == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh pr comment ${{ github.event.pull_request.number }} --body "Release ${{ steps.get_version.outputs.tag }} published to crates.io, npm (@ogex-nu/ogex), PyPI"
+        run: gh pr comment ${{ github.event.pull_request.number }} --body "Release ${{ steps.get_version.outputs.tag }} published to crates.io, npm (@ogex/ogex), PyPI"
 
   publish-crates:
     name: Publish to crates.io
@@ -150,7 +150,7 @@ jobs:
         run: cargo publish -p ${{ matrix.crate }}
 
   publish-npm:
-    name: Publish to npm (@ogex-nu/ogex)
+    name: Publish to npm (@ogex/ogex)
     runs-on: ubuntu-latest
     environment: npm
     needs: create-release
@@ -172,7 +172,7 @@ jobs:
           wasm-pack --version
 
       - name: Build WASM
-        run: wasm-pack build ogex --scope ogex-nu --target nodejs --release --features wasm
+        run: wasm-pack build ogex --scope ogex --target nodejs --release --features wasm
 
       - name: Update README with JS/TS examples
         run: cp ogex/README.wasm.md ogex/pkg/README.md
