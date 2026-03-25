@@ -210,6 +210,8 @@ jobs:
     name: Publish to PyPI
     runs-on: ubuntu-latest
     environment: pypi
+    permissions:
+      id-token: write
     needs: create-release
     if: (github.event_name == 'pull_request' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')) || github.event_name == 'workflow_dispatch'
 
@@ -225,8 +227,13 @@ jobs:
       - name: Install dependencies
         run: pip install build maturin
 
-      - name: Build and publish
+      - name: Build wheel
         run: |
           cd ogex-python
-          python -m build
-          maturin publish
+          pip install maturin
+          maturin build --release --out dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: ogex-python/dist
