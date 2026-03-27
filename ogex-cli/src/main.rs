@@ -61,6 +61,15 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Case-insensitive matching
+        #[arg(long)]
+        ignore_case: bool,
+        /// Multiline mode (^ and $ match line boundaries)
+        #[arg(long)]
+        multiline: bool,
+        /// Dotall mode (. matches newlines)
+        #[arg(long)]
+        dotall: bool,
     },
     /// Convert regex syntax between flavors
     Convert {
@@ -88,6 +97,15 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Case-insensitive matching
+        #[arg(long)]
+        ignore_case: bool,
+        /// Multiline mode (^ and $ match line boundaries)
+        #[arg(long)]
+        multiline: bool,
+        /// Dotall mode (. matches newlines)
+        #[arg(long)]
+        dotall: bool,
     },
     /// Check if pattern matches
     Match {
@@ -98,6 +116,15 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Case-insensitive matching
+        #[arg(long)]
+        ignore_case: bool,
+        /// Multiline mode (^ and $ match line boundaries)
+        #[arg(long)]
+        multiline: bool,
+        /// Dotall mode (. matches newlines)
+        #[arg(long)]
+        dotall: bool,
     },
     /// Explain a regex pattern in human-readable format
     Explain {
@@ -115,6 +142,15 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Case-insensitive matching
+        #[arg(long)]
+        ignore_case: bool,
+        /// Multiline mode (^ and $ match line boundaries)
+        #[arg(long)]
+        multiline: bool,
+        /// Dotall mode (. matches newlines)
+        #[arg(long)]
+        dotall: bool,
     },
 }
 
@@ -127,7 +163,18 @@ fn main() {
             input,
             verbose,
             json,
-        } => cmd_test(&pattern, &read_input(&input), verbose, json),
+            ignore_case,
+            multiline,
+            dotall,
+        } => cmd_test(
+            &pattern,
+            &read_input(&input),
+            verbose,
+            json,
+            ignore_case,
+            multiline,
+            dotall,
+        ),
         Commands::Convert {
             pattern,
             ogex,
@@ -139,23 +186,62 @@ fn main() {
             pattern,
             input,
             json,
-        } => cmd_find(&pattern, &read_input(&input), json),
+            ignore_case,
+            multiline,
+            dotall,
+        } => cmd_find(
+            &pattern,
+            &read_input(&input),
+            json,
+            ignore_case,
+            multiline,
+            dotall,
+        ),
         Commands::Match {
             pattern,
             input,
             json,
-        } => cmd_match(&pattern, &read_input(&input), json),
+            ignore_case,
+            multiline,
+            dotall,
+        } => cmd_match(
+            &pattern,
+            &read_input(&input),
+            json,
+            ignore_case,
+            multiline,
+            dotall,
+        ),
         Commands::Explain { pattern } => cmd_explain(&pattern),
         Commands::Replace {
             pattern,
             replacement,
             input,
             json,
-        } => cmd_replace(&pattern, &replacement, &read_input(&input), json),
+            ignore_case,
+            multiline,
+            dotall,
+        } => cmd_replace(
+            &pattern,
+            &replacement,
+            &read_input(&input),
+            json,
+            ignore_case,
+            multiline,
+            dotall,
+        ),
     }
 }
 
-fn cmd_test(pattern: &str, input: &str, verbose: bool, json: bool) {
+fn cmd_test(
+    pattern: &str,
+    input: &str,
+    verbose: bool,
+    json: bool,
+    ignore_case: bool,
+    multiline: bool,
+    dotall: bool,
+) {
     let regex = match Regex::new(pattern) {
         Ok(r) => r,
         Err(e) => {
@@ -318,7 +404,14 @@ fn cmd_convert(pattern: Option<&str>, to_ogex: bool, to_python: bool, to_pcre: b
     }
 }
 
-fn cmd_find(pattern: &str, input: &str, json: bool) {
+fn cmd_find(
+    pattern: &str,
+    input: &str,
+    json: bool,
+    ignore_case: bool,
+    multiline: bool,
+    dotall: bool,
+) {
     let regex = match Regex::new(pattern) {
         Ok(r) => r,
         Err(e) => {
@@ -362,7 +455,14 @@ fn cmd_find(pattern: &str, input: &str, json: bool) {
     }
 }
 
-fn cmd_match(pattern: &str, input: &str, json: bool) {
+fn cmd_match(
+    pattern: &str,
+    input: &str,
+    json: bool,
+    ignore_case: bool,
+    multiline: bool,
+    dotall: bool,
+) {
     let regex = match Regex::new(pattern) {
         Ok(r) => r,
         Err(e) => {
@@ -405,7 +505,15 @@ fn cmd_explain(pattern: &str) {
     }
 }
 
-fn cmd_replace(pattern: &str, replacement: &str, input: &str, json: bool) {
+fn cmd_replace(
+    pattern: &str,
+    replacement: &str,
+    input: &str,
+    json: bool,
+    ignore_case: bool,
+    multiline: bool,
+    dotall: bool,
+) {
     let regex = match Regex::new(pattern) {
         Ok(r) => r,
         Err(e) => {
