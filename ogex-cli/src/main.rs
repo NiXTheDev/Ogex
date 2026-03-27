@@ -3,6 +3,21 @@ use colored::Colorize;
 use ogex::{
     Regex, convert_all, explain, transpile, transpile_debug, transpile_to_ogex, transpile_to_python,
 };
+use std::io::{self, Read};
+
+/// Read input from stdin or from a string
+fn read_input(input: &str) -> String {
+    if input == "-" {
+        let mut buffer = String::new();
+        io::stdin().read_to_string(&mut buffer).unwrap_or_else(|e| {
+            eprintln!("{} {}", "Error reading stdin:".red().bold(), e);
+            std::process::exit(1);
+        });
+        buffer
+    } else {
+        input.to_string()
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "ogex")]
@@ -80,7 +95,7 @@ fn main() {
             pattern,
             input,
             verbose,
-        } => cmd_test(&pattern, &input, verbose),
+        } => cmd_test(&pattern, &read_input(&input), verbose),
         Commands::Convert {
             pattern,
             ogex,
@@ -88,14 +103,14 @@ fn main() {
             pcre,
             debug,
         } => cmd_convert(pattern.as_deref(), ogex, python, pcre, debug),
-        Commands::Find { pattern, input } => cmd_find(&pattern, &input),
-        Commands::Match { pattern, input } => cmd_match(&pattern, &input),
+        Commands::Find { pattern, input } => cmd_find(&pattern, &read_input(&input)),
+        Commands::Match { pattern, input } => cmd_match(&pattern, &read_input(&input)),
         Commands::Explain { pattern } => cmd_explain(&pattern),
         Commands::Replace {
             pattern,
             replacement,
             input,
-        } => cmd_replace(&pattern, &replacement, &input),
+        } => cmd_replace(&pattern, &replacement, &read_input(&input)),
     }
 }
 
