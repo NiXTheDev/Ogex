@@ -26,14 +26,14 @@ impl PyRegex {
     }
 
     /// Check if the pattern matches at the beginning of the string
-    fn match_(&self, string: &str) -> Option<PyMatch> {
+    fn match_(&self, string: &str) -> PyResult<PyMatch> {
         // Check if match is at position 0
         if let Some(m) = self.inner.find(string)
             && m.start == 0
         {
-            return Some(PyMatch::new(m, string.to_string()));
+            return Ok(PyMatch::new(m, string.to_string()));
         }
-        None
+        Err(pyo3::exceptions::PyValueError::new_err("no match"))
     }
 
     /// Search for a match anywhere in the string
@@ -197,9 +197,9 @@ fn search(pattern: &str, string: &str) -> PyResult<Option<PyMatch>> {
 
 /// Check if pattern matches at start
 #[pyfunction]
-fn match_(pattern: &str, string: &str) -> PyResult<Option<PyMatch>> {
+fn match_(pattern: &str, string: &str) -> PyResult<PyMatch> {
     let regex = PyRegex::new(pattern)?;
-    Ok(regex.match_(string))
+    regex.match_(string)
 }
 
 /// Find all matches
