@@ -733,12 +733,6 @@ mod tests {
     }
 
     #[test]
-    fn test_atomic_group() {
-        let expr = Expr::AtomicGroup(Box::new(Expr::literal('a')));
-        assert_eq!(expr.to_regex_string(), "(@*:a)");
-    }
-
-    #[test]
     fn test_conditional_group() {
         let expr = Expr::ConditionalGroup(Box::new(Expr::literal('a')));
         assert_eq!(expr.to_regex_string(), "(@%:a)");

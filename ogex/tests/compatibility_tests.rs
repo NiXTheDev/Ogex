@@ -149,6 +149,36 @@ mod groups {
     }
 
     #[test]
+    fn test_named_groups_populated() {
+        // Test that named_groups HashMap is populated with correct spans
+        let regex = Regex::new("(first:\\w+) (last:\\w+)").unwrap();
+        let input = "John Doe";
+        let m = regex.find(input).unwrap();
+
+        // Verify the full match
+        assert_eq!(m.as_str(input), "John Doe");
+
+        // Verify named_groups contains both named groups
+        assert_eq!(m.named_groups.len(), 2);
+
+        // Verify "first" group spans
+        let first_span = m.named_group("first");
+        assert!(first_span.is_some(), "Named group 'first' should exist");
+        let (first_start, first_end) = first_span.unwrap();
+        assert_eq!(&input[first_start..first_end], "John");
+
+        // Verify "last" group spans
+        let last_span = m.named_group("last");
+        assert!(last_span.is_some(), "Named group 'last' should exist");
+        let (last_start, last_end) = last_span.unwrap();
+        assert_eq!(&input[last_start..last_end], "Doe");
+
+        // Verify named_group_str helper works
+        assert_eq!(m.named_group_str(input, "first"), Some("John"));
+        assert_eq!(m.named_group_str(input, "last"), Some("Doe"));
+    }
+
+    #[test]
     fn test_nested_groups() {
         let regex = Regex::new("((a)(b))").unwrap();
         let input = "ab";

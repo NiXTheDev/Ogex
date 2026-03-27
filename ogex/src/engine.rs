@@ -96,6 +96,7 @@ impl Match {
 }
 
 /// The regex engine
+#[derive(Debug)]
 pub struct Regex {
     nfa: Nfa,
 }
@@ -141,10 +142,150 @@ impl Regex {
         matches
     }
 
+    /// Replace the first match with a replacement string
+    #[doc(hidden)]
+    pub fn replace(&self, input: &str, replacement: &str) -> String {
+        // Parse the replacement string
+        let repl = match crate::replace::Replacement::parse(replacement) {
+            Ok(r) => r,
+            Err(_) => return input.to_string(), // Return original on error
+        };
+
+        // Find first match
+        if let Some(m) = self.find(input) {
+            // Build result with pre-match, replacement, post-match
+            let before = &input[..m.start];
+            let after = &input[m.end..];
+
+            // Build group pairs for replacement
+            let mut group_pairs = vec![(0usize, 0usize); m.groups.len()];
+            for (idx, opt) in m.groups.iter().enumerate() {
+                if let Some((s, e)) = opt {
+                    if idx > 0 && idx < group_pairs.len() {
+                        group_pairs[idx - 1] = (*s, *e);
+                    }
+                }
+            }
+
+            // Apply replacement - build name->index map for named groups
+            let mut named_idx_map: std::collections::HashMap<String, u32> =
+                std::collections::HashMap::new();
+            for (name, &group_id) in self.nfa.named_groups() {
+                named_idx_map.insert(name.clone(), group_id);
+            }
+            let replaced =
+                repl.apply_with_names(input, m.start, m.end, &group_pairs, &named_idx_map);
+
+            format!("{}{}{}", before, replaced, after)
+        } else {
+            input.to_string()
+        }
+    }
+
+    /// Replace all matches with a replacement string
+    #[doc(hidden)]
+    pub fn replace_all(&self, input: &str, replacement: &str) -> String {
+        // Parse the replacement string
+        let repl = match crate::replace::Replacement::parse(replacement) {
+            Ok(r) => r,
+            Err(_) => return input.to_string(),
+        };
+
+        // Build name->index map for named groups
+        let mut named_idx_map: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
+        for (name, &group_id) in self.nfa.named_groups() {
+            named_idx_map.insert(name.clone(), group_id);
+        }
+
+        let mut result = String::new();
+        let mut last_end = 0;
+
+        for m in self.find_all(input) {
+            // Add text before match
+            result.push_str(&input[last_end..m.start]);
+
+            // Build group pairs
+            let mut group_pairs = vec![(0usize, 0usize); m.groups.len()];
+            for (idx, opt) in m.groups.iter().enumerate() {
+                if let Some((s, e)) = opt {
+                    if idx > 0 && idx < group_pairs.len() {
+                        group_pairs[idx - 1] = (*s, *e);
+                    }
+                }
+            }
+
+            // Apply replacement
+            let replaced =
+                repl.apply_with_names(input, m.start, m.end, &group_pairs, &named_idx_map);
+            result.push_str(&replaced);
+
+            last_end = m.end;
+        }
+
+        // Add remaining text
+        result.push_str(&input[last_end..]);
+
+        result
+    }
+
+    /// Split the input string by matches
+    ///
+    /// # Example
+    /// ```
+    /// use ogex::Regex;
+    ///
+    /// let regex = Regex::new(r"o").unwrap();
+    /// let parts = regex.split("hello world");
+    /// assert_eq!(parts, vec!["hell", " w", "rld"]);
+    /// ```
+    pub fn split(&self, input: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut last_end = 0;
+
+        for m in self.find_all(input) {
+            // Add text before match
+            result.push(input[last_end..m.start].to_string());
+            last_end = m.end;
+        }
+
+        // Add remaining text
+        result.push(input[last_end..].to_string());
+
+        result
+    }
+
+    /// Check if the pattern matches the entire input string
+    ///
+    /// # Example
+    /// ```
+    /// use ogex::Regex;
+    ///
+    /// let regex = Regex::new(r"abc").unwrap();
+    /// assert!(regex.fullmatch("abc").is_some());
+    /// assert!(regex.fullmatch("xabcx").is_none());
+    /// ```
+    pub fn fullmatch(&self, input: &str) -> Option<Match> {
+        if let Some(m) = self.find(input) {
+            if m.start == 0 && m.end == input.len() {
+                return Some(m);
+            }
+        }
+        None
+    }
+
     /// Match the pattern starting from a specific position
     fn match_from(&self, input: &str, start: usize) -> Option<Match> {
         let mut simulator = NfaSimulator::new(&self.nfa, input, start);
         simulator.run()
+    }
+
+    /// Match the pattern starting from a specific position, returning the FIRST match
+    /// Used for atomic groups to prevent backtracking
+    #[allow(dead_code)]
+    fn match_from_first(&self, input: &str, start: usize) -> Option<Match> {
+        let mut simulator = NfaSimulator::new(&self.nfa, input, start);
+        simulator.run_first_match()
     }
 
     /// Try to match the pattern at a specific position without trying other positions
@@ -152,6 +293,11 @@ impl Regex {
     pub fn try_match_at(&self, input: &str, pos: usize) -> bool {
         let mut simulator = NfaSimulator::new(&self.nfa, input, pos);
         simulator.run().is_some()
+    }
+
+    /// Get the named groups mapping (name -> group_id)
+    pub fn named_groups(&self) -> &HashMap<String, u32> {
+        self.nfa.named_groups()
     }
 }
 
@@ -217,6 +363,18 @@ impl<'a> NfaSimulator<'a> {
 
     #[allow(clippy::type_complexity)]
     fn run(&mut self) -> Option<Match> {
+        self.run_impl(false)
+    }
+
+    /// Run the NFA simulator and return the FIRST match (for atomic groups)
+    #[allow(dead_code)]
+    #[allow(clippy::type_complexity)]
+    fn run_first_match(&mut self) -> Option<Match> {
+        self.run_impl(true)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn run_impl(&mut self, first_match: bool) -> Option<Match> {
         // Determine input length and get current character/byte
         let input_len = if self.ascii_mode {
             self.input_bytes.len()
@@ -237,6 +395,24 @@ impl<'a> NfaSimulator<'a> {
         // Check if start state is accepting (empty match)
         // Use memoization for each state in the closure
         current_states = self.memoize_closure(&current_states, pos, &mut last_accept);
+
+        // For first_match mode, return immediately if we have an accepting state at start
+        if first_match && last_accept.is_some() {
+            return last_accept.map(|(end, groups)| {
+                let mut named_groups = HashMap::new();
+                for (name, &group_id) in self.nfa.named_groups() {
+                    if let Some(span) = groups.get(group_id as usize).and_then(|&s| s) {
+                        named_groups.insert(name.clone(), span);
+                    }
+                }
+                Match {
+                    start: self.start_pos,
+                    end,
+                    groups,
+                    named_groups,
+                }
+            });
+        }
 
         while pos < input_len {
             let c = if self.ascii_mode {
@@ -259,6 +435,24 @@ impl<'a> NfaSimulator<'a> {
             // Apply epsilon closure and use memoization
             current_states = self.epsilon_closure(&current_states, pos);
             current_states = self.memoize_closure(&current_states, pos, &mut last_accept);
+
+            // For first_match mode, return immediately if we have an accepting state
+            if first_match && last_accept.is_some() {
+                return last_accept.map(|(end, groups)| {
+                    let mut named_groups = HashMap::new();
+                    for (name, &group_id) in self.nfa.named_groups() {
+                        if let Some(span) = groups.get(group_id as usize).and_then(|&s| s) {
+                            named_groups.insert(name.clone(), span);
+                        }
+                    }
+                    Match {
+                        start: self.start_pos,
+                        end,
+                        groups,
+                        named_groups,
+                    }
+                });
+            }
         }
 
         // Try to reach accept state via epsilon transitions (for end anchors)
@@ -266,11 +460,21 @@ impl<'a> NfaSimulator<'a> {
         // Use memoization for final epsilon closure (result not needed after)
         self.memoize_closure(&current_states, pos, &mut last_accept);
 
-        last_accept.map(|(end, groups)| Match {
-            start: self.start_pos,
-            end,
-            groups,
-            named_groups: HashMap::new(),
+        last_accept.map(|(end, groups)| {
+            // Build named_groups HashMap from NFA's named_groups mapping and captured groups
+            let mut named_groups = HashMap::new();
+            for (name, &group_id) in self.nfa.named_groups() {
+                if let Some(span) = groups.get(group_id as usize).and_then(|&s| s) {
+                    named_groups.insert(name.clone(), span);
+                }
+            }
+
+            Match {
+                start: self.start_pos,
+                end,
+                groups,
+                named_groups,
+            }
         })
     }
 
@@ -395,6 +599,16 @@ impl<'a> NfaSimulator<'a> {
                                 }
                             }
                         }
+                    }
+                    Transition::AtomicGroup(inner_nfa) => {
+                        // AtomicGroup is a NO-OP in a non-backtracking NFA engine.
+                        // The engine already doesn't backtrack, so there's nothing to "prevent".
+                        // Just follow epsilon transitions into the inner NFA like a regular group.
+                        let inner_start = inner_nfa.start;
+                        // Add epsilon transition to inner NFA's start state
+                        let new_state =
+                            SimState::with_groups(inner_start, sim_state.groups.clone());
+                        new_states.push(new_state);
                     }
                     _ => {
                         // Regular character transition
@@ -600,6 +814,13 @@ impl<'a> NfaSimulator<'a> {
                             stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
                         }
                     }
+                    Transition::AtomicGroup(inner_nfa) => {
+                        // AtomicGroup is a NO-OP in epsilon closure - handled in step_with_backrefs
+                        let inner_start = inner_nfa.start;
+                        let new_state =
+                            SimState::with_groups(inner_start, sim_state.groups.clone());
+                        closure.push(new_state);
+                    }
                     _ => {} // Char/CharClass handled in step
                 }
             }
@@ -671,6 +892,60 @@ impl<'a> NfaSimulator<'a> {
             }
         }
         false
+    }
+
+    /// Check if an inner NFA matches at a specific position and return the end position
+    /// Used for atomic groups - returns the longest match
+    #[allow(dead_code)]
+    fn check_atomic_group(&self, inner_nfa: &Nfa, pos: usize) -> Option<usize> {
+        let input_remaining = &self._input[pos..];
+        if input_remaining.is_empty() {
+            return None;
+        }
+
+        // Create a regex from the inner NFA
+        let regex = Regex {
+            nfa: inner_nfa.clone(),
+        };
+
+        // Try to match starting at position 0 of the remaining input
+        // This ensures the match starts at the beginning of the atomic group
+        if let Some(m) = regex.match_from(input_remaining, 0) {
+            // The match starts at position 0 of input_remaining
+            // Return the end position relative to the original input
+            return Some(pos + m.end);
+        }
+
+        None
+    }
+
+    /// Find all possible match end positions for an atomic group at a given position
+    /// Returns all lengths that the inner pattern can match at the BEGINNING of the input
+    #[allow(dead_code)]
+    fn find_atomic_group_matches(&self, inner_nfa: &Nfa, pos: usize) -> Vec<usize> {
+        let input_remaining = &self._input[pos..];
+        if input_remaining.is_empty() {
+            return vec![];
+        }
+
+        let mut matches = Vec::new();
+        let regex = Regex {
+            nfa: inner_nfa.clone(),
+        };
+
+        // Check each possible prefix length
+        for i in 1..=input_remaining.len() {
+            let prefix = &input_remaining[..i];
+            // Check if the pattern matches at the BEGINNING of the prefix (position 0)
+            if let Some(m) = regex.match_from(prefix, 0) {
+                // Only add if the match starts at position 0 and ends at position i
+                if m.start == 0 && m.end == i {
+                    matches.push(pos + i);
+                }
+            }
+        }
+
+        matches
     }
 }
 

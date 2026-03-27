@@ -143,6 +143,14 @@ pub enum ParseError {
 
     /// Invalid quantifier
     InvalidQuantifier(String),
+
+    /// Unsupported syntax feature
+    UnsupportedSyntax {
+        /// The unsupported feature
+        feature: String,
+        /// Location in the source (optional)
+        span: Option<Span>,
+    },
 }
 
 impl fmt::Display for ParseError {
@@ -162,6 +170,9 @@ impl fmt::Display for ParseError {
             }
             ParseError::InvalidQuantifier(msg) => {
                 write!(f, "invalid quantifier: {}", msg)
+            }
+            ParseError::UnsupportedSyntax { feature, .. } => {
+                write!(f, "unsupported syntax: {}", feature)
             }
         }
     }

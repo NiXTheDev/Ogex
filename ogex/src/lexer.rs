@@ -235,6 +235,14 @@ impl<'a> Lexer<'a> {
                     'S' => Token::NonWhitespace,
                     'b' => Token::WordBoundary,
                     'B' => Token::NonWordBoundary,
+                    // Standard escape sequences - convert to actual characters
+                    'n' => Token::Escape('\n'), // newline (0x0A)
+                    't' => Token::Escape('\t'), // tab (0x09)
+                    'r' => Token::Escape('\r'), // carriage return (0x0D)
+                    // Hex escape: \xNN
+                    'x' => self.read_hex_escape(),
+                    // Unicode escape: \uNNNN
+                    'u' => self.read_unicode_escape(),
                     _ if c.is_ascii_digit() => {
                         // It's a backreference number
                         let mut num = c.to_digit(10).unwrap();
@@ -252,6 +260,55 @@ impl<'a> Lexer<'a> {
                 }
             }
             None => Token::Escape('\0'), // Should be an error, but for now
+        }
+    }
+
+    /// Read a hex escape sequence \xNN (assumes \x was already consumed)
+    fn read_hex_escape(&mut self) -> Token {
+        let mut hex_str = String::new();
+        // Read up to 2 hex digits
+        for _ in 0..2 {
+            match self.current_char {
+                Some(c) if c.is_ascii_hexdigit() => {
+                    hex_str.push(c);
+                    self.advance();
+                }
+                _ => break,
+            }
+        }
+        // Parse the hex string
+        if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
+            Token::Escape(byte as char)
+        } else {
+            // Invalid hex escape, treat as literal 'x'
+            Token::Escape('x')
+        }
+    }
+
+    /// Read a unicode escape sequence \uNNNN (assumes \u was already consumed)
+    fn read_unicode_escape(&mut self) -> Token {
+        let mut hex_str = String::new();
+        // Read up to 4 hex digits
+        for _ in 0..4 {
+            match self.current_char {
+                Some(c) if c.is_ascii_hexdigit() => {
+                    hex_str.push(c);
+                    self.advance();
+                }
+                _ => break,
+            }
+        }
+        // Parse the hex string
+        if let Ok(code_point) = u32::from_str_radix(&hex_str, 16) {
+            if let Some(ch) = char::from_u32(code_point) {
+                Token::Escape(ch)
+            } else {
+                // Invalid unicode code point, treat as literal 'u'
+                Token::Escape('u')
+            }
+        } else {
+            // Invalid hex escape, treat as literal 'u'
+            Token::Escape('u')
         }
     }
 
@@ -282,7 +339,17 @@ impl<'a> Lexer<'a> {
             return Token::BackrefRelative(-n); // Store as negative: -1, -2, etc.
         }
 
-        // Default: treat as named backreference (including \g{1} for positive numbers)
+        // Check if this is a positive integer (numbered backreference)
+        // \g{n} where n is a positive integer (no leading zeros)
+        if let Ok(n) = content.parse::<u32>() {
+            // Ensure no leading zeros (except for "0" which isn't positive anyway)
+            // and that it's actually positive (> 0)
+            if n > 0 && content == n.to_string() {
+                return Token::BackrefNumber(n);
+            }
+        }
+
+        // Default: treat as named backreference
         Token::BackrefName(content)
     }
 
@@ -598,7 +665,7 @@ impl<'a> Lexer<'a> {
                 }
 
                 if let Some(c) = self.current_char
-                    && (c.is_alphabetic() || c == '_')
+                    && (c.is_alphanumeric() || c == '_')
                 {
                     let name = self.read_identifier();
                     // After the name, we expect a colon for named group
@@ -888,9 +955,9 @@ mod tests {
         assert_eq!(
             tokens,
             vec![
-                Token::Escape('n'),
-                Token::Escape('t'),
-                Token::Escape('\\'),
+                Token::Escape('\n'), // newline (0x0A)
+                Token::Escape('\t'), // tab (0x09)
+                Token::Escape('\\'), // literal backslash
                 Token::Eof,
             ]
         );
@@ -1035,14 +1102,11 @@ mod tests {
 
     #[test]
     fn test_backref_name_with_number() {
-        // \g{1} is treated as a named backreference with name "1"
+        // \g{1} is treated as a numbered backreference (fixed in v0.1.2)
         let mut lexer = Lexer::new(r"\g{1}");
         let tokens = lexer.tokenize();
 
-        assert_eq!(
-            tokens,
-            vec![Token::BackrefName("1".to_string()), Token::Eof,]
-        );
+        assert_eq!(tokens, vec![Token::BackrefNumber(1), Token::Eof,]);
     }
 
     #[test]

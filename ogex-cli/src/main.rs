@@ -61,6 +61,15 @@ enum Commands {
         /// The regex pattern to explain
         pattern: String,
     },
+    /// Replace matches with a replacement string
+    Replace {
+        /// The regex pattern
+        pattern: String,
+        /// The replacement string
+        replacement: String,
+        /// The input string
+        input: String,
+    },
 }
 
 fn main() {
@@ -82,6 +91,11 @@ fn main() {
         Commands::Find { pattern, input } => cmd_find(&pattern, &input),
         Commands::Match { pattern, input } => cmd_match(&pattern, &input),
         Commands::Explain { pattern } => cmd_explain(&pattern),
+        Commands::Replace {
+            pattern,
+            replacement,
+            input,
+        } => cmd_replace(&pattern, &replacement, &input),
     }
 }
 
@@ -291,4 +305,17 @@ fn cmd_explain(pattern: &str) {
             std::process::exit(1);
         }
     }
+}
+
+fn cmd_replace(pattern: &str, replacement: &str, input: &str) {
+    let regex = match Regex::new(pattern) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{} {}", "Error:".red().bold(), e);
+            std::process::exit(1);
+        }
+    };
+
+    let result = regex.replace(input, replacement);
+    println!("{}", result.green());
 }

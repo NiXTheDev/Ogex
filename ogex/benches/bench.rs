@@ -1,5 +1,6 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use ogex::Regex;
+use std::hint::black_box;
 
 fn bench_basic_matching(c: &mut Criterion) {
     let pattern = Regex::new(r"hello\s+\w+").unwrap();

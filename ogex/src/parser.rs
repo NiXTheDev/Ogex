@@ -356,10 +356,14 @@ impl<'a> Parser<'a> {
                 Ok(Expr::NegativeLookbehind(Box::new(pattern)))
             }
             Token::Atomic => {
+                // Capture span BEFORE advancing (so it points to the @*:)
+                let span = self.current_span();
                 self.advance();
-                let pattern = self.parse_alternation()?;
-                self.expect(Token::RightParen)?;
-                Ok(Expr::AtomicGroup(Box::new(pattern)))
+                // Atomic groups are not supported in non-backtracking NFA engines
+                return Err(ParseError::UnsupportedSyntax {
+                    feature: "atomic group (@*:pattern) is not supported".to_string(),
+                    span: Some(span),
+                });
             }
             Token::Conditional => {
                 self.advance();
@@ -479,10 +483,15 @@ impl<'a> Parser<'a> {
                 }
             }
             Token::Escape(c) => {
-                // Escaped character in class (could be \d, \w, etc.)
+                // Escaped character in class
+                // Check if it's a shorthand (\d, \w, \s, \D, \W, \S)
                 let c = *c;
                 self.advance();
-                Ok(ClassItem::Shorthand(c))
+                match c {
+                    'd' | 'D' | 'w' | 'W' | 's' | 'S' => Ok(ClassItem::Shorthand(c)),
+                    // For other escapes (like \n, \t, \r), treat as literal character
+                    _ => Ok(ClassItem::Char(c)),
+                }
             }
             _ => Err(ParseError::UnexpectedToken {
                 expected: "character or escape".to_string(),

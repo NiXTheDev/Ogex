@@ -224,11 +224,23 @@ mod named_backref {
 
     #[test]
     fn test_named_backref_with_number_syntax() {
-        // \g{1} is treated as a named backreference with name "1", not \1
-        // So this is actually looking for a group named "1" which doesn't exist
-        // Use \1 syntax for numbered groups
-        let regex = Regex::new(r"(a)\1").unwrap();
+        // \g{1} is now treated as a numbered backreference (same as \1)
+        // To get a named backreference with name "1", you need to create a group named "1"
+        let regex = Regex::new(r"(1:a)\g{1}").unwrap(); // Group named "1" with content "a"
+        assert!(regex.is_match("aa")); // Matches "a" + backref to "a" = "aa"
+    }
+
+    #[test]
+    fn test_g_1_is_numbered_backref() {
+        // \g{1} should behave exactly like \1 (first capturing group)
+        let regex = Regex::new(r"(a)\g{1}").unwrap();
         assert!(regex.is_match("aa"));
+        assert!(!regex.is_match("ab"));
+
+        // \g{2} should behave like \2 (second capturing group)
+        let regex = Regex::new(r"(a)(b)\g{2}").unwrap();
+        assert!(regex.is_match("abb"));
+        assert!(!regex.is_match("aba"));
     }
 
     #[test]

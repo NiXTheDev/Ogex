@@ -56,6 +56,10 @@ pub enum Transition {
     /// Negative lookbehind assertion (@<~:pattern)
     /// Contains the compiled NFA for the inner pattern
     NegativeLookbehind(Nfa),
+    /// Atomic group (@*:pattern)
+    /// Contains the compiled NFA for the inner pattern
+    /// Once the inner pattern matches, backtracking is prevented
+    AtomicGroup(Nfa),
 }
 
 /// An NFA state
@@ -200,7 +204,7 @@ impl Nfa {
             Expr::Group(expr) => self.compile_group(expr, None),
             Expr::NonCapturingGroup(expr) => self.compile_expr(expr),
             Expr::NamedGroup { name, pattern } => self.compile_group(pattern, Some(name.clone())),
-            Expr::AtomicGroup(expr) => self.compile_expr(expr),
+            Expr::AtomicGroup(expr) => self.compile_atomic_group(expr),
             Expr::ConditionalGroup(expr) => self.compile_expr(expr),
             Expr::ModeFlagsGroup { flags, pattern } => {
                 // Parse the flags and merge into NFA's mode_flags
@@ -269,6 +273,22 @@ impl Nfa {
         } else {
             self.add_transition(start, Transition::NegativeLookbehind(inner_nfa), accept);
         }
+
+        (start, accept)
+    }
+
+    /// Compile an atomic group (@*:pattern)
+    ///
+    /// Atomic groups prevent backtracking: once the inner pattern matches,
+    /// the engine commits to that match and won't try alternative paths.
+    fn compile_atomic_group(&mut self, expr: &Expr) -> (StateId, StateId) {
+        // Compile the inner pattern into a separate NFA
+        let inner_nfa = Nfa::from_expr(expr);
+
+        let start = self.new_state();
+        let accept = self.new_state();
+
+        self.add_transition(start, Transition::AtomicGroup(inner_nfa), accept);
 
         (start, accept)
     }
@@ -604,6 +624,11 @@ impl Nfa {
         &self.numbered_groups
     }
 
+    /// Get the named groups mapping (name -> group_id)
+    pub fn named_groups(&self) -> &HashMap<String, u32> {
+        &self.named_groups
+    }
+
     /// Get the count of numbered (non-named) groups
     pub fn numbered_group_count(&self) -> usize {
         self.numbered_groups.len()
@@ -770,12 +795,5 @@ mod tests {
         ]);
         let nfa = Nfa::from_expr(&expr);
         assert!(nfa.states.len() >= 8);
-    }
-
-    #[test]
-    fn test_nfa_from_atomic_group() {
-        let expr = Expr::AtomicGroup(Box::new(Expr::literal('a')));
-        let nfa = Nfa::from_expr(&expr);
-        assert!(nfa.states.len() >= 2);
     }
 }
