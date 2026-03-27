@@ -145,6 +145,52 @@ impl JsRegex {
         array
     }
 
+    /// Replace the first match with a replacement string
+    #[wasm_bindgen(js_name = sub)]
+    pub fn sub(&self, replacement: &str, input: &str) -> String {
+        self.regex.replace(input, replacement)
+    }
+
+    /// Replace all matches with a replacement string
+    #[wasm_bindgen(js_name = replaceAll)]
+    pub fn replace_all(&self, replacement: &str, input: &str) -> String {
+        self.regex.replace_all(input, replacement)
+    }
+
+    /// Split the input string by matches
+    #[wasm_bindgen]
+    pub fn split(&self, input: &str) -> js_sys::Array {
+        let parts = self.regex.split(input);
+        let array = js_sys::Array::new();
+        for part in parts {
+            array.push(&JsValue::from_str(&part));
+        }
+        array
+    }
+
+    /// Check if the pattern matches the entire input string
+    #[wasm_bindgen(js_name = fullmatch)]
+    pub fn fullmatch(&self, input: &str) -> Option<JsMatch> {
+        self.regex.fullmatch(input).map(|m| JsMatch {
+            match_result: m,
+            input: input.to_string(),
+        })
+    }
+
+    /// Check if the pattern matches at the start of the input
+    #[wasm_bindgen]
+    pub fn match_(&self, input: &str) -> Option<JsMatch> {
+        if let Some(m) = self.regex.find(input) {
+            if m.start == 0 {
+                return Some(JsMatch {
+                    match_result: m,
+                    input: input.to_string(),
+                });
+            }
+        }
+        None
+    }
+
     /// Transpile pattern to legacy syntax (structured error)
     #[wasm_bindgen(js_name = transpile)]
     pub fn transpile(pattern: &str) -> Result<String, JsError> {
