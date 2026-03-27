@@ -226,5 +226,6 @@ fn ogex(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(match_, m)?)?;
     m.add_function(wrap_pyfunction!(findall, m)?)?;
     m.add_function(wrap_pyfunction!(sub, m)?)?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
