@@ -19,6 +19,24 @@ fn read_input(input: &str) -> String {
     }
 }
 
+/// Read input from file or from stdin
+fn read_input_from_file(file: Option<&str>) -> String {
+    match file {
+        Some(path) => std::fs::read_to_string(path).unwrap_or_else(|e| {
+            eprintln!("{} {}", "Error reading file:".red().bold(), e);
+            std::process::exit(1);
+        }),
+        None => {
+            let mut buffer = String::new();
+            io::stdin().read_to_string(&mut buffer).unwrap_or_else(|e| {
+                eprintln!("{} {}", "Error reading stdin:".red().bold(), e);
+                std::process::exit(1);
+            });
+            buffer
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "ogex")]
 #[command(about = "Ogex - A custom regex engine with unified syntax")]
@@ -34,7 +52,7 @@ enum Commands {
     Test {
         /// The regex pattern
         pattern: String,
-        /// The input string to test
+        /// The input string to test (use "-" for stdin)
         input: String,
         /// Show detailed match information
         #[arg(short, long)]
@@ -61,14 +79,14 @@ enum Commands {
     Find {
         /// The regex pattern
         pattern: String,
-        /// The input string
+        /// The input string (use "-" for stdin)
         input: String,
     },
     /// Check if pattern matches
     Match {
         /// The regex pattern
         pattern: String,
-        /// The input string
+        /// The input string (use "-" for stdin)
         input: String,
     },
     /// Explain a regex pattern in human-readable format
@@ -82,7 +100,7 @@ enum Commands {
         pattern: String,
         /// The replacement string
         replacement: String,
-        /// The input string
+        /// The input string (use "-" for stdin)
         input: String,
     },
 }
