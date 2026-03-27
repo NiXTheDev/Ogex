@@ -16,3 +16,4 @@ path = "src/main.rs"
 ogex = { path = "../ogex", version = "0.1.1" }
 clap = { version = "4.0", features = ["derive"] }
 colored = "3.1"
+serde_json = "1.0"

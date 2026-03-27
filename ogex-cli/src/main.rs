@@ -3,6 +3,7 @@ use colored::Colorize;
 use ogex::{
     Regex, convert_all, explain, transpile, transpile_debug, transpile_to_ogex, transpile_to_python,
 };
+use serde_json;
 use std::io::{self, Read};
 
 /// Read input from stdin or from a string
@@ -57,6 +58,9 @@ enum Commands {
         /// Show detailed match information
         #[arg(short, long)]
         verbose: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Convert regex syntax between flavors
     Convert {
@@ -81,6 +85,9 @@ enum Commands {
         pattern: String,
         /// The input string (use "-" for stdin)
         input: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Check if pattern matches
     Match {
@@ -88,6 +95,9 @@ enum Commands {
         pattern: String,
         /// The input string (use "-" for stdin)
         input: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Explain a regex pattern in human-readable format
     Explain {
@@ -102,6 +112,9 @@ enum Commands {
         replacement: String,
         /// The input string (use "-" for stdin)
         input: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -113,7 +126,8 @@ fn main() {
             pattern,
             input,
             verbose,
-        } => cmd_test(&pattern, &read_input(&input), verbose),
+            json,
+        } => cmd_test(&pattern, &read_input(&input), verbose, json),
         Commands::Convert {
             pattern,
             ogex,
@@ -121,23 +135,27 @@ fn main() {
             pcre,
             debug,
         } => cmd_convert(pattern.as_deref(), ogex, python, pcre, debug),
-        Commands::Find { pattern, input } => cmd_find(&pattern, &read_input(&input)),
-        Commands::Match { pattern, input } => cmd_match(&pattern, &read_input(&input)),
+        Commands::Find {
+            pattern,
+            input,
+            json,
+        } => cmd_find(&pattern, &read_input(&input), json),
+        Commands::Match {
+            pattern,
+            input,
+            json,
+        } => cmd_match(&pattern, &read_input(&input), json),
         Commands::Explain { pattern } => cmd_explain(&pattern),
         Commands::Replace {
             pattern,
             replacement,
             input,
-        } => cmd_replace(&pattern, &replacement, &read_input(&input)),
+            json,
+        } => cmd_replace(&pattern, &replacement, &read_input(&input), json),
     }
 }
 
-fn cmd_test(pattern: &str, input: &str, verbose: bool) {
-    println!("{}", "Testing pattern...".bold());
-    println!("  Pattern: {}", pattern.cyan());
-    println!("  Input:   {}", input.yellow());
-    println!();
-
+fn cmd_test(pattern: &str, input: &str, verbose: bool, json: bool) {
     let regex = match Regex::new(pattern) {
         Ok(r) => r,
         Err(e) => {
@@ -147,21 +165,46 @@ fn cmd_test(pattern: &str, input: &str, verbose: bool) {
     };
 
     if let Some(m) = regex.find(input) {
-        println!("{}", "✓ Match found!".green().bold());
-        println!("  Position: {}..{}", m.start, m.end);
-        println!("  Match:    {}", m.as_str(input).green());
-
-        // Always show groups if present
-        if !m.groups.is_empty() || !m.named_groups.is_empty() {
+        if json {
+            let result = serde_json::json!({
+                "matched": true,
+                "start": m.start,
+                "end": m.end,
+                "text": m.as_str(input),
+            });
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+        } else {
+            println!("{}", "Testing pattern...".bold());
+            println!("  Pattern: {}", pattern.cyan());
+            println!("  Input:   {}", input.yellow());
             println!();
-            println!("{}", "Capture groups:".bold());
+            println!("{}", "✓ Match found!".green().bold());
+            println!("  Position: {}..{}", m.start, m.end);
+            println!("  Match:    {}", m.as_str(input).green());
 
-            // Show numbered groups
-            for (idx, group) in m.groups.iter().enumerate() {
-                if let Some((start, end)) = group {
+            // Always show groups if present
+            if !m.groups.is_empty() || !m.named_groups.is_empty() {
+                println!();
+                println!("{}", "Capture groups:".bold());
+
+                // Show numbered groups
+                for (idx, group) in m.groups.iter().enumerate() {
+                    if let Some((start, end)) = group {
+                        println!(
+                            "  Group {}: {}..{} = {}",
+                            idx,
+                            start,
+                            end,
+                            &input[*start..*end].green()
+                        );
+                    }
+                }
+
+                // Show named groups
+                for (name, (start, end)) in &m.named_groups {
                     println!(
-                        "  Group {}: {}..{} = {}",
-                        idx,
+                        "  Group ({}): {}..{} = {}",
+                        name.cyan(),
                         start,
                         end,
                         &input[*start..*end].green()
@@ -169,26 +212,24 @@ fn cmd_test(pattern: &str, input: &str, verbose: bool) {
                 }
             }
 
-            // Show named groups
-            for (name, (start, end)) in &m.named_groups {
-                println!(
-                    "  Group ({}): {}..{} = {}",
-                    name.cyan(),
-                    start,
-                    end,
-                    &input[*start..*end].green()
-                );
+            // Verbose mode shows additional debug info
+            if verbose {
+                println!();
+                println!("{}", "Debug info:".bold());
+                println!("  Total numbered groups: {}", m.groups.len());
+                println!("  Total named groups: {}", m.named_groups.len());
             }
         }
-
-        // Verbose mode shows additional debug info
-        if verbose {
-            println!();
-            println!("{}", "Debug info:".bold());
-            println!("  Total numbered groups: {}", m.groups.len());
-            println!("  Total named groups: {}", m.named_groups.len());
-        }
+    } else if json {
+        let result = serde_json::json!({
+            "matched": false,
+        });
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
     } else {
+        println!("{}", "Testing pattern...".bold());
+        println!("  Pattern: {}", pattern.cyan());
+        println!("  Input:   {}", input.yellow());
+        println!();
         println!("{}", "✗ No match".red());
     }
 }
@@ -277,7 +318,7 @@ fn cmd_convert(pattern: Option<&str>, to_ogex: bool, to_python: bool, to_pcre: b
     }
 }
 
-fn cmd_find(pattern: &str, input: &str) {
+fn cmd_find(pattern: &str, input: &str, json: bool) {
     let regex = match Regex::new(pattern) {
         Ok(r) => r,
         Err(e) => {
@@ -288,7 +329,18 @@ fn cmd_find(pattern: &str, input: &str) {
 
     let matches = regex.find_all(input);
 
-    if matches.is_empty() {
+    if json {
+        let result = serde_json::json!({
+            "matches": matches.iter().map(|m| {
+                serde_json::json!({
+                    "start": m.start,
+                    "end": m.end,
+                    "text": m.as_str(input),
+                })
+            }).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
+    } else if matches.is_empty() {
         println!("{}", "No matches found".red());
     } else {
         println!(
@@ -310,7 +362,7 @@ fn cmd_find(pattern: &str, input: &str) {
     }
 }
 
-fn cmd_match(pattern: &str, input: &str) {
+fn cmd_match(pattern: &str, input: &str, json: bool) {
     let regex = match Regex::new(pattern) {
         Ok(r) => r,
         Err(e) => {
@@ -320,8 +372,21 @@ fn cmd_match(pattern: &str, input: &str) {
     };
 
     if regex.is_match(input) {
-        println!("{}", "true".green());
+        if json {
+            let result = serde_json::json!({
+                "matched": true,
+            });
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+        } else {
+            println!("{}", "true".green());
+        }
         std::process::exit(0);
+    } else if json {
+        let result = serde_json::json!({
+            "matched": false,
+        });
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
+        std::process::exit(1);
     } else {
         println!("{}", "false".red());
         std::process::exit(1);
@@ -340,7 +405,7 @@ fn cmd_explain(pattern: &str) {
     }
 }
 
-fn cmd_replace(pattern: &str, replacement: &str, input: &str) {
+fn cmd_replace(pattern: &str, replacement: &str, input: &str, json: bool) {
     let regex = match Regex::new(pattern) {
         Ok(r) => r,
         Err(e) => {
@@ -350,5 +415,12 @@ fn cmd_replace(pattern: &str, replacement: &str, input: &str) {
     };
 
     let result = regex.replace(input, replacement);
-    println!("{}", result.green());
+    if json {
+        let json_result = serde_json::json!({
+            "result": result,
+        });
+        println!("{}", serde_json::to_string_pretty(&json_result).unwrap());
+    } else {
+        println!("{}", result.green());
+    }
 }
