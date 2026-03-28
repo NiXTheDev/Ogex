@@ -280,14 +280,6 @@ impl Regex {
         simulator.run()
     }
 
-    /// Match the pattern starting from a specific position, returning the FIRST match
-    /// Used for atomic groups to prevent backtracking
-    #[allow(dead_code)]
-    fn match_from_first(&self, input: &str, start: usize) -> Option<Match> {
-        let mut simulator = NfaSimulator::new(&self.nfa, input, start);
-        simulator.run_first_match()
-    }
-
     /// Try to match the pattern at a specific position without trying other positions
     /// Used for lookahead assertions - checks if pattern matches at current position
     pub fn try_match_at(&self, input: &str, pos: usize) -> bool {
@@ -364,13 +356,6 @@ impl<'a> NfaSimulator<'a> {
     #[allow(clippy::type_complexity)]
     fn run(&mut self) -> Option<Match> {
         self.run_impl(false)
-    }
-
-    /// Run the NFA simulator and return the FIRST match (for atomic groups)
-    #[allow(dead_code)]
-    #[allow(clippy::type_complexity)]
-    fn run_first_match(&mut self) -> Option<Match> {
-        self.run_impl(true)
     }
 
     #[allow(clippy::type_complexity)]
@@ -892,60 +877,6 @@ impl<'a> NfaSimulator<'a> {
             }
         }
         false
-    }
-
-    /// Check if an inner NFA matches at a specific position and return the end position
-    /// Used for atomic groups - returns the longest match
-    #[allow(dead_code)]
-    fn check_atomic_group(&self, inner_nfa: &Nfa, pos: usize) -> Option<usize> {
-        let input_remaining = &self._input[pos..];
-        if input_remaining.is_empty() {
-            return None;
-        }
-
-        // Create a regex from the inner NFA
-        let regex = Regex {
-            nfa: inner_nfa.clone(),
-        };
-
-        // Try to match starting at position 0 of the remaining input
-        // This ensures the match starts at the beginning of the atomic group
-        if let Some(m) = regex.match_from(input_remaining, 0) {
-            // The match starts at position 0 of input_remaining
-            // Return the end position relative to the original input
-            return Some(pos + m.end);
-        }
-
-        None
-    }
-
-    /// Find all possible match end positions for an atomic group at a given position
-    /// Returns all lengths that the inner pattern can match at the BEGINNING of the input
-    #[allow(dead_code)]
-    fn find_atomic_group_matches(&self, inner_nfa: &Nfa, pos: usize) -> Vec<usize> {
-        let input_remaining = &self._input[pos..];
-        if input_remaining.is_empty() {
-            return vec![];
-        }
-
-        let mut matches = Vec::new();
-        let regex = Regex {
-            nfa: inner_nfa.clone(),
-        };
-
-        // Check each possible prefix length
-        for i in 1..=input_remaining.len() {
-            let prefix = &input_remaining[..i];
-            // Check if the pattern matches at the BEGINNING of the prefix (position 0)
-            if let Some(m) = regex.match_from(prefix, 0) {
-                // Only add if the match starts at position 0 and ends at position i
-                if m.start == 0 && m.end == i {
-                    matches.push(pos + i);
-                }
-            }
-        }
-
-        matches
     }
 }
 

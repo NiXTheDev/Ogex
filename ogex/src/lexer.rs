@@ -182,12 +182,6 @@ impl<'a> Lexer<'a> {
         self.position += 1;
     }
 
-    /// Peek at the next character without consuming it
-    #[allow(dead_code)]
-    fn peek(&self) -> Option<char> {
-        self.input.chars().nth(self.position)
-    }
-
     /// Check if a character is valid for an identifier (group name)
     fn is_identifier_char(c: char) -> bool {
         c.is_alphanumeric() || c == '_'
@@ -204,20 +198,6 @@ impl<'a> Lexer<'a> {
             }
         }
         self.input[start..self.position - 1].to_string()
-    }
-
-    /// Read a number (for backreferences or quantifiers)
-    #[allow(dead_code)]
-    fn read_number(&mut self) -> u32 {
-        let start = self.position - 1;
-        while let Some(c) = self.current_char {
-            if c.is_ascii_digit() {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        self.input[start..self.position - 1].parse().unwrap_or(0)
     }
 
     /// Read an escape sequence (assumes backslash was already consumed)
