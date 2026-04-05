@@ -1,6 +1,5 @@
 #!/bin/sh
 set -euo pipefail
-exec 2>&1
 
 # Ensure cargo is available
 if ! command -v cargo >/dev/null 2>&1; then
