@@ -1,5 +1,5 @@
 #!/bin/sh
-set -x
+set -euo pipefail
 exec 2>&1
 
 # Ensure cargo is available
