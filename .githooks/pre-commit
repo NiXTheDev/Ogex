@@ -1,37 +1,43 @@
-#!/bin/sh
+#!/usr/bin/env bash
 set -euo pipefail
 
-# Ensure cargo is available
 if ! command -v cargo >/dev/null 2>&1; then
-    echo "ERROR: cargo not found in PATH (tried adding ~/.cargo/bin)"
-    exit 1
+	echo "ERROR: cargo not found in PATH." >&2
+	exit 1
 fi
 
-# ---- Original sample checks ----
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
-    against=HEAD
+	against=HEAD
 else
-    against=$(git hash-object -t tree /dev/null)
+	against=$(git hash-object -t tree /dev/null)
 fi
 
-allownonascii=$(git config --type=bool hooks.allownonascii)
+allownonascii=$(git config --type=bool hooks.allownonascii || true)
 
-if [ "$allownonascii" != "true" ] &&
-   test $(git diff-index --cached --name-only --diff-filter=A -z $against |
-     LC_ALL=C tr -d '[ -~]\0' | wc -c) != 0
-then
-    cat <<\EOF
+# Count bytes outside ASCII in newly-added paths (see git's pre-commit.sample).
+# Avoid "test $(wc -c): ..." without quoting — wc padding can confuse test.
+nonascii=$(
+	git diff-index --cached --name-only --diff-filter=A -z "$against" |
+		LC_ALL=C tr -d '[ -~]\0' | wc -c | tr -d '[:space:]'
+)
+nonascii=${nonascii:-0}
+if [[ "$allownonascii" != "true" && "$nonascii" -ne 0 ]]; then
+	cat <<'EOF' >&2
 Error: Attempt to add a non-ASCII file name...
 EOF
-    exit 1
+	exit 1
 fi
 
-git diff-index --check --cached $against -- || exit 1
+echo ">>> git diff-index --check (whitespace/conflict markers)" >&2
+git diff-index --check --cached "$against" --
 
-# ---- Rust checks ----
-cargo fmt --check || exit 1
-cargo check --workspace || exit 1
-cargo clippy --workspace || exit 1
-cargo test --workspace || exit 1
+echo ">>> cargo fmt --check" >&2
+cargo fmt --all --check
 
-echo "All checks passed!"
+echo ">>> cargo clippy (workspace, locked, -D warnings)" >&2
+cargo clippy --locked --workspace --all-targets -- -D warnings
+
+echo ">>> cargo test (workspace, locked)" >&2
+cargo test --locked --workspace
+
+echo "Pre-commit checks passed." >&2
