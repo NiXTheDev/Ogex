@@ -671,18 +671,18 @@ impl Nfa {
         for state in &self.states {
             for (transition, _) in &state.transitions {
                 match transition {
-                    Transition::Char(c) => {
-                        if *c as u32 > 127 {
-                            return false;
-                        }
+                    Transition::Char(c) if *c as u32 > 127 => {
+                        return false;
                     }
-                    Transition::CharClass { lookup, .. } => {
+                    Transition::Char(_) => {}
+                    Transition::CharClass { lookup, .. }
+                        if lookup[16..32].iter().any(|&b| b != 0) =>
+                    {
                         // Check if lookup table has any bits set for non-ASCII (128-255)
                         // Bytes 16-31 correspond to characters 128-255
-                        if lookup[16..32].iter().any(|&b| b != 0) {
-                            return false;
-                        }
+                        return false;
                     }
+                    Transition::CharClass { .. } => {}
                     // All other transition types are ASCII-compatible
                     // - Any (.) works with bytes
                     // - Anchors work with byte positions

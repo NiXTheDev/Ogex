@@ -354,7 +354,7 @@ mod large_input_tests {
     #[test]
     fn test_medium_alternation_input() {
         let input = "abcabcabcabc";
-        test_with_timeout("(a|b|c)+", &input, 1000, |regex, input| {
+        test_with_timeout("(a|b|c)+", input, 1000, |regex, input| {
             assert!(regex.is_match(input));
         });
     }

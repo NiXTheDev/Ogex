@@ -76,10 +76,11 @@ fn test_named_group_replacement() {
     // Groups must be in order by index (group 1 first, group 2 second)
     let mut group_pairs = vec![(0usize, 0usize); m.groups.len()];
     for (idx, opt) in m.groups.iter().enumerate() {
-        if let Some((s, e)) = opt {
-            if idx > 0 && idx < group_pairs.len() {
-                group_pairs[idx - 1] = (*s, *e);
-            }
+        if let Some((s, e)) = opt
+            && idx > 0
+            && idx < group_pairs.len()
+        {
+            group_pairs[idx - 1] = (*s, *e);
         }
     }
     let result = repl.apply("ab", m.start, m.end, &group_pairs);
@@ -292,10 +293,11 @@ fn test_numbered_group_replacement() {
     // Groups in order by index
     let mut group_pairs = vec![(0usize, 0usize); m.groups.len()];
     for (idx, opt) in m.groups.iter().enumerate() {
-        if let Some((s, e)) = opt {
-            if idx > 0 && idx < m.groups.len() {
-                group_pairs[idx - 1] = (*s, *e);
-            }
+        if let Some((s, e)) = opt
+            && idx > 0
+            && idx < m.groups.len()
+        {
+            group_pairs[idx - 1] = (*s, *e);
         }
     }
     let result = repl.apply("abc", m.start, m.end, &group_pairs);

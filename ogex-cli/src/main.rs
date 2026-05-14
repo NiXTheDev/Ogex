@@ -3,7 +3,6 @@ use colored::Colorize;
 use ogex::{
     Regex, convert_all, explain, transpile, transpile_debug, transpile_to_ogex, transpile_to_python,
 };
-use serde_json;
 use std::io::{self, Read};
 
 /// Read input from stdin or from a string
@@ -21,6 +20,7 @@ fn read_input(input: &str) -> String {
 }
 
 /// Read input from file or from stdin
+#[allow(dead_code)]
 fn read_input_from_file(file: Option<&str>) -> String {
     match file {
         Some(path) => std::fs::read_to_string(path).unwrap_or_else(|e| {
@@ -238,9 +238,9 @@ fn cmd_test(
     input: &str,
     verbose: bool,
     json: bool,
-    ignore_case: bool,
-    multiline: bool,
-    dotall: bool,
+    _ignore_case: bool,
+    _multiline: bool,
+    _dotall: bool,
 ) {
     let regex = match Regex::new(pattern) {
         Ok(r) => r,
@@ -408,9 +408,9 @@ fn cmd_find(
     pattern: &str,
     input: &str,
     json: bool,
-    ignore_case: bool,
-    multiline: bool,
-    dotall: bool,
+    _ignore_case: bool,
+    _multiline: bool,
+    _dotall: bool,
 ) {
     let regex = match Regex::new(pattern) {
         Ok(r) => r,
@@ -459,9 +459,9 @@ fn cmd_match(
     pattern: &str,
     input: &str,
     json: bool,
-    ignore_case: bool,
-    multiline: bool,
-    dotall: bool,
+    _ignore_case: bool,
+    _multiline: bool,
+    _dotall: bool,
 ) {
     let regex = match Regex::new(pattern) {
         Ok(r) => r,
@@ -510,9 +510,9 @@ fn cmd_replace(
     replacement: &str,
     input: &str,
     json: bool,
-    ignore_case: bool,
-    multiline: bool,
-    dotall: bool,
+    _ignore_case: bool,
+    _multiline: bool,
+    _dotall: bool,
 ) {
     let regex = match Regex::new(pattern) {
         Ok(r) => r,

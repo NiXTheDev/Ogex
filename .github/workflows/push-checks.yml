@@ -22,7 +22,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Clippy
-        run: cargo clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
   format:
     name: Format Check
@@ -54,7 +54,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run type check
-        run: cargo check --workspace
+        run: cargo check --locked --workspace
 
   test:
     name: Tests
@@ -71,10 +71,34 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
 
-  test-ogex-cli:
-    name: Test Ogex CLI
+  wasm:
+    name: WASM (wasm-pack)
+    runs-on: ubuntu-latest
+    needs: [lint, format, typecheck]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build WASM package
+        run: wasm-pack build ogex --scope ogex --target nodejs --release --features wasm
+
+  python-bindings:
+    name: Python bindings (maturin build)
     runs-on: ubuntu-latest
     needs: [lint, format, typecheck]
     steps:
@@ -87,7 +111,13 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Run CLI tests
-        run: |
-          cargo build --package ogex-cli --release
-          cargo test --package ogex-cli
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build wheel
+        run: cd ogex-python && maturin build --release --out dist

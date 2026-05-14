@@ -69,12 +69,6 @@ jobs:
           PR_BODY_ENCODED=$(base64 -w0 /tmp/pr_body.txt)
           echo "body=$PR_BODY_ENCODED" >> $GITHUB_OUTPUT
 
-      - name: Set default release notes for manual dispatch
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          echo "title=Release ${{ steps.get_version.outputs.tag }}" >> $GITHUB_OUTPUT
-          echo "body=Manual release" >> $GITHUB_OUTPUT
-
       - name: Check if tag exists
         id: check_tag
         if: steps.should_create.outputs.value == 'true'
@@ -95,26 +89,49 @@ jobs:
           git tag -a "${{ steps.get_version.outputs.tag }}" -m "Release ${{ steps.get_version.outputs.tag }}"
           git push origin "${{ steps.get_version.outputs.tag }}"
 
-      - name: Decode PR body for comment
-        id: decode_body
+      - name: Prepare GitHub Release metadata
+        id: release_meta
         if: steps.should_create.outputs.value == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG: ${{ steps.get_version.outputs.tag }}
+          ACTOR: ${{ github.actor }}
+          PR_TITLE: ${{ steps.get_pr.outputs.title }}
+          PR_BODY_B64: ${{ steps.get_pr.outputs.body }}
         run: |
-          if [ -n "${{ steps.get_pr.outputs.body }}" ]; then
-            DECODED_BODY=$(echo "${{ steps.get_pr.outputs.body }}" | base64 -d)
-            # Escape for JSON
-            ESCAPED_BODY=$(echo "$DECODED_BODY" | jq -Rs .)
-            echo "body=$ESCAPED_BODY" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            title="${PR_TITLE:-}"
+            if [ -z "$title" ]; then
+              title="Release ${TAG}"
+            fi
+            if [ -n "${PR_BODY_B64:-}" ]; then
+              body=$(echo "$PR_BODY_B64" | base64 -d)
+            else
+              body="No description provided."
+            fi
           else
-            echo 'body=""' >> $GITHUB_OUTPUT
+            title="Release ${TAG}"
+            body="Manual release triggered by ${ACTOR}."
           fi
+
+          delim="OGEX_RELEASE_NOTES_EOF"
+          {
+            echo "title<<${delim}"
+            printf '%s\n' "$title"
+            echo "${delim}"
+            echo "body<<${delim}"
+            printf '%s\n' "$body"
+            echo "${delim}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         if: steps.should_create.outputs.value == 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.get_version.outputs.tag }}
-          name: "${{ steps.get_pr.outputs.title }}"
-          body: "${{ steps.get_pr.outputs.body }}"
+          name: ${{ steps.release_meta.outputs.title }}
+          body: ${{ steps.release_meta.outputs.body }}
           draft: false
           prerelease: false
           generate_release_notes: false
@@ -147,7 +164,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Publish to crates.io
-        run: cargo publish -p ${{ matrix.crate }}
+        run: cargo publish -p ${{ matrix.crate }} --locked
 
   publish-npm:
     name: Publish to npm (@ogex/ogex)
@@ -169,6 +186,7 @@ jobs:
       - name: Install wasm-pack
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           wasm-pack --version
 
       - name: Build WASM

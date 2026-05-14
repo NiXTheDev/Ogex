@@ -160,10 +160,11 @@ impl Regex {
             // Build group pairs for replacement
             let mut group_pairs = vec![(0usize, 0usize); m.groups.len()];
             for (idx, opt) in m.groups.iter().enumerate() {
-                if let Some((s, e)) = opt {
-                    if idx > 0 && idx < group_pairs.len() {
-                        group_pairs[idx - 1] = (*s, *e);
-                    }
+                if let Some((s, e)) = opt
+                    && idx > 0
+                    && idx < group_pairs.len()
+                {
+                    group_pairs[idx - 1] = (*s, *e);
                 }
             }
 
@@ -208,10 +209,11 @@ impl Regex {
             // Build group pairs
             let mut group_pairs = vec![(0usize, 0usize); m.groups.len()];
             for (idx, opt) in m.groups.iter().enumerate() {
-                if let Some((s, e)) = opt {
-                    if idx > 0 && idx < group_pairs.len() {
-                        group_pairs[idx - 1] = (*s, *e);
-                    }
+                if let Some((s, e)) = opt
+                    && idx > 0
+                    && idx < group_pairs.len()
+                {
+                    group_pairs[idx - 1] = (*s, *e);
                 }
             }
 
@@ -266,12 +268,8 @@ impl Regex {
     /// assert!(regex.fullmatch("xabcx").is_none());
     /// ```
     pub fn fullmatch(&self, input: &str) -> Option<Match> {
-        if let Some(m) = self.find(input) {
-            if m.start == 0 && m.end == input.len() {
-                return Some(m);
-            }
-        }
-        None
+        self.find(input)
+            .filter(|m| m.start == 0 && m.end == input.len())
     }
 
     /// Match the pattern starting from a specific position
@@ -742,16 +740,14 @@ impl<'a> NfaSimulator<'a> {
                             }
                         }
                     }
-                    Transition::WordBoundary => {
-                        if self.is_word_boundary(pos) {
-                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
-                        }
+                    Transition::WordBoundary if self.is_word_boundary(pos) => {
+                        stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
                     }
-                    Transition::NonWordBoundary => {
-                        if !self.is_word_boundary(pos) {
-                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
-                        }
+                    Transition::WordBoundary => {}
+                    Transition::NonWordBoundary if !self.is_word_boundary(pos) => {
+                        stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
                     }
+                    Transition::NonWordBoundary => {}
                     Transition::GroupStart(group_id) => {
                         let mut new_groups = sim_state.groups.clone();
                         let idx = *group_id as usize;
@@ -770,35 +766,35 @@ impl<'a> NfaSimulator<'a> {
                         }
                         stack.push(SimState::with_groups(*target, new_groups));
                     }
-                    Transition::Lookahead(inner_nfa) => {
-                        // Check if the inner pattern matches at the current position
-                        // without consuming input (lookahead is zero-width)
-                        if self.check_lookahead(inner_nfa, pos) {
-                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
-                        }
+                    // Check if the inner pattern matches at the current position
+                    // without consuming input (lookahead is zero-width)
+                    Transition::Lookahead(inner_nfa) if self.check_lookahead(inner_nfa, pos) => {
+                        stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
                     }
-                    Transition::NegativeLookahead(inner_nfa) => {
-                        // Check if the inner pattern does NOT match at the current position
-                        if !self.check_lookahead(inner_nfa, pos) {
-                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
-                        }
+                    Transition::Lookahead(_) => {}
+                    // Check if the inner pattern does NOT match at the current position
+                    Transition::NegativeLookahead(inner_nfa)
+                        if !self.check_lookahead(inner_nfa, pos) =>
+                    {
+                        stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
                     }
-                    Transition::Lookbehind(inner_nfa) => {
-                        // Check if the inner pattern matches at the position BEFORE current
-                        // (lookbehind checks what comes immediately before current position)
-                        // If at position 0, nothing precedes it, so lookbehind always fails
-                        if self.check_lookbehind(inner_nfa, pos) {
-                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
-                        }
+                    Transition::NegativeLookahead(_) => {}
+                    // Check if the inner pattern matches at the position BEFORE current
+                    // (lookbehind checks what comes immediately before current position)
+                    // If at position 0, nothing precedes it, so lookbehind always fails
+                    Transition::Lookbehind(inner_nfa) if self.check_lookbehind(inner_nfa, pos) => {
+                        stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
                     }
-                    Transition::NegativeLookbehind(inner_nfa) => {
-                        // Check if the inner pattern does NOT match at the position before current
-                        // At position 0, nothing precedes it, so it's NOT preceded by any pattern
-                        // Negative lookbehind succeeds at position 0
-                        if !self.check_lookbehind(inner_nfa, pos) {
-                            stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
-                        }
+                    Transition::Lookbehind(_) => {}
+                    // Check if the inner pattern does NOT match at the position before current
+                    // At position 0, nothing precedes it, so it's NOT preceded by any pattern
+                    // Negative lookbehind succeeds at position 0
+                    Transition::NegativeLookbehind(inner_nfa)
+                        if !self.check_lookbehind(inner_nfa, pos) =>
+                    {
+                        stack.push(SimState::with_groups(*target, sim_state.groups.clone()));
                     }
+                    Transition::NegativeLookbehind(_) => {}
                     Transition::AtomicGroup(inner_nfa) => {
                         // AtomicGroup is a NO-OP in epsilon closure - handled in step_with_backrefs
                         let inner_start = inner_nfa.start;

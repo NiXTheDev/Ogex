@@ -360,10 +360,10 @@ impl<'a> Parser<'a> {
                 let span = self.current_span();
                 self.advance();
                 // Atomic groups are not supported in non-backtracking NFA engines
-                return Err(ParseError::UnsupportedSyntax {
+                Err(ParseError::UnsupportedSyntax {
                     feature: "atomic group (@*:pattern) is not supported".to_string(),
                     span: Some(span),
-                });
+                })
             }
             Token::Conditional => {
                 self.advance();
