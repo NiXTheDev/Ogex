@@ -12,6 +12,11 @@ Ogex introduces a cleaner, more intuitive syntax for named capturing groups and 
 
 The engine is written in Rust for performance and provides bindings for multiple languages.
 
+> [!IMPORTANT]
+> This project is going to soon be moved to a self-hosted Forgejo instance
+> Currently it will act as a push-mirror, and in the future, github will be the push-mirror
+> The repository is already available at: https://hangar.nixthedev.ru/NiXTheDev/Ogex
+
 ## Crates
 
 | Crate | Description |
