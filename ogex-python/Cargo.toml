@@ -15,8 +15,8 @@ name = "ogex"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.28", features = ["extension-module"] }
+pyo3 = { version = "0.29", features = ["extension-module"] }
 ogex = { path = "../ogex" }
 
 [build-dependencies]
-pyo3-build-config = "0.28"
+pyo3-build-config = "0.29"
